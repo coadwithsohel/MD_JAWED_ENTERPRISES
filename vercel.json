@@ -2,11 +2,5 @@
   "buildCommand": "npx prisma generate && npm run build",
   "installCommand": "npm install",
   "framework": "nextjs",
-  "outputDirectory": ".next",
-  "regions": ["bom1"],
-  "env": {
-    "DATABASE_URL": "@database_url",
-    "DIRECT_URL": "@direct_url",
-    "AUTH_SECRET": "@auth_secret"
-  }
+  "regions": ["bom1"]
 }
