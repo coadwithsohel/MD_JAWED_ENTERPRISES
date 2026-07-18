@@ -10,7 +10,7 @@ async function main() {
     where: { mobile: '9999999999' },
     update: { passwordHash: hash, role: 'OWNER', isActive: true },
     create: {
-      fullName: 'Admin Owner',
+      fullName: 'MD Javed',
       mobile: '9999999999',
       passwordHash: hash,
       role: 'OWNER',
