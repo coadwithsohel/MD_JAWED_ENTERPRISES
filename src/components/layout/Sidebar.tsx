@@ -1,12 +1,22 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
-  LayoutDashboard, Users, Package, ShoppingCart, FileText,
-  CreditCard, AlertTriangle, Upload, Settings, LogOut, Menu, X, Bell,
-} from 'lucide-react';
+  LayoutDashboard,
+  Users,
+  Package,
+  ShoppingCart,
+  FileText,
+  CreditCard,
+  AlertTriangle,
+  Upload,
+  Settings,
+  LogOut,
+  Menu,
+  X,
+} from "lucide-react";
 
 interface NavItem {
   href: string;
@@ -14,20 +24,67 @@ interface NavItem {
   icon: React.ElementType;
   exact?: boolean;
   badge?: number;
-  variant?: 'warning';
+  variant?: "warning";
 }
 
 function useOverdueCount() {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
-    fetch('/api/overdue/count')
+    fetch("/api/overdue/count")
       .then((r) => r.json())
       .then((d) => setCount(d.count ?? 0))
       .catch(() => {});
   }, []);
 
   return count;
+}
+
+function NavList({
+  items,
+  pathname,
+  onNavigate,
+}: {
+  items: NavItem[];
+  pathname: string;
+  onNavigate: () => void;
+}) {
+  return (
+    <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-0.5">
+      {items.map((item) => {
+        const Icon = item.icon;
+        const active = item.exact
+          ? pathname === item.href
+          : pathname.startsWith(item.href);
+
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            onClick={onNavigate}
+            className={[
+              "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all group",
+              active
+                ? item.variant === "warning"
+                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/20"
+                  : "bg-blue-600/20 text-blue-400 border border-blue-600/20"
+                : item.variant === "warning"
+                  ? "text-amber-400 hover:bg-amber-900/20 hover:text-amber-300"
+                  : "text-slate-400 hover:bg-slate-800 hover:text-white",
+            ].join(" ")}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="flex-1 leading-none">{item.label}</span>
+            {item.badge != null && item.badge > 0 && (
+              <span className="bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-4.5 text-center leading-none">
+                {item.badge > 99 ? "99+" : item.badge}
+              </span>
+            )}
+          </Link>
+        );
+      })}
+    </nav>
+  );
 }
 
 export default function Sidebar() {
@@ -38,66 +95,36 @@ export default function Sidebar() {
   const [logoutConfirm, setLogoutConfirm] = useState(false);
 
   const navItems: NavItem[] = [
-    { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-    { href: '/dashboard/customers', label: 'Customers', icon: Users },
-    { href: '/dashboard/products', label: 'Products', icon: Package },
-    { href: '/dashboard/sales', label: 'Point of Sale', icon: ShoppingCart },
-    { href: '/dashboard/invoices', label: 'Sales History', icon: FileText },
-    { href: '/dashboard/credit', label: 'Credit Mgmt', icon: CreditCard },
     {
-      href: '/dashboard/overdue-customers',
-      label: 'Overdue Customers',
+      href: "/dashboard",
+      label: "Dashboard",
+      icon: LayoutDashboard,
+      exact: true,
+    },
+    { href: "/dashboard/customers", label: "Customers", icon: Users },
+    { href: "/dashboard/products", label: "Products", icon: Package },
+    { href: "/dashboard/sales", label: "Point of Sale", icon: ShoppingCart },
+    { href: "/dashboard/invoices", label: "Sales History", icon: FileText },
+    { href: "/dashboard/credit", label: "Credit Mgmt", icon: CreditCard },
+    {
+      href: "/dashboard/overdue-customers",
+      label: "Overdue Customers",
       icon: AlertTriangle,
       badge: overdueCount,
-      variant: 'warning',
+      variant: "warning",
     },
-    { href: '/dashboard/customers/import', label: 'Excel Import', icon: Upload },
-    { href: '/dashboard/settings', label: 'Settings', icon: Settings },
+    {
+      href: "/dashboard/customers/import",
+      label: "Excel Import",
+      icon: Upload,
+    },
+    { href: "/dashboard/settings", label: "Settings", icon: Settings },
   ];
 
-  const isActive = (item: NavItem) => {
-    if (item.exact) return pathname === item.href;
-    return pathname.startsWith(item.href);
-  };
-
   const handleLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    router.push('/login');
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
   };
-
-  const NavList = () => (
-    <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-0.5">
-      {navItems.map((item) => {
-        const Icon = item.icon;
-        const active = isActive(item);
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            onClick={() => setMobileOpen(false)}
-            className={[
-              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all group',
-              active
-                ? item.variant === 'warning'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/20'
-                  : 'bg-blue-600/20 text-blue-400 border border-blue-600/20'
-                : item.variant === 'warning'
-                ? 'text-amber-400 hover:bg-amber-900/20 hover:text-amber-300'
-                : 'text-slate-400 hover:bg-slate-800 hover:text-white',
-            ].join(' ')}
-          >
-            <Icon className="h-4 w-4 flex-shrink-0" />
-            <span className="flex-1 leading-none">{item.label}</span>
-            {item.badge != null && item.badge > 0 && (
-              <span className="bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center leading-none">
-                {item.badge > 99 ? '99+' : item.badge}
-              </span>
-            )}
-          </Link>
-        );
-      })}
-    </nav>
-  );
 
   return (
     <>
@@ -121,16 +148,20 @@ export default function Sidebar() {
       {/* Sidebar — desktop: always visible, mobile: drawer */}
       <aside
         className={[
-          'fixed lg:relative inset-y-0 left-0 z-50 flex flex-col w-64 bg-slate-900 text-slate-300 border-r border-slate-800 transition-transform duration-300',
-          mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
-        ].join(' ')}
+          "fixed lg:relative inset-y-0 left-0 z-50 flex flex-col w-64 bg-slate-900 text-slate-300 border-r border-slate-800 transition-transform duration-300",
+          mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+        ].join(" ")}
         aria-label="Main navigation"
       >
         {/* Logo */}
         <div className="flex items-center justify-between p-5 border-b border-slate-800">
           <div>
-            <h2 className="text-lg font-bold text-white tracking-wide leading-none">MD JAVED</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Mobiles &amp; Electronics</p>
+            <h2 className="text-lg font-bold text-white tracking-wide leading-none">
+              MD JAVED
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Mobiles &amp; Electronics
+            </p>
           </div>
           <button
             onClick={() => setMobileOpen(false)}
@@ -141,7 +172,11 @@ export default function Sidebar() {
           </button>
         </div>
 
-        <NavList />
+        <NavList
+          items={navItems}
+          pathname={pathname}
+          onNavigate={() => setMobileOpen(false)}
+        />
 
         {/* Logout */}
         <div className="p-3 border-t border-slate-800">
