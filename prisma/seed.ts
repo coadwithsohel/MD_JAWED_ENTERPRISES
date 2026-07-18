@@ -11,7 +11,7 @@ async function main() {
     update: { passwordHash: hash, role: 'OWNER', isActive: true },
     create: {
       fullName: 'MD Javed',
-      mobile: '9999999999',
+      mobile: '7020231921',
       passwordHash: hash,
       role: 'OWNER',
       isActive: true,
