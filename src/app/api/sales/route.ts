@@ -226,16 +226,16 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // 10. Create payment record for cash or partial
-      if (paidAmount.gt(0)) {
+      // 10. Create payment record for cash or partial (only if customer exists — cash walk-in sales may have no customer)
+      if (paidAmount.gt(0) && customer) {
         const receiptNumber = await generateReceiptNumber(tx);
         await tx.payment.create({
           data: {
             receiptNumber,
-            customerId: customer!.id,
+            customerId: customer.id,
             saleId: newSale.id,
             amount: paidAmount,
-            paymentMode: 'CASH',
+            paymentMode: saleType === 'PARTIAL' ? 'CASH' : 'CASH',
             receivedById: auth.userId,
           },
         });
