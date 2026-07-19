@@ -73,20 +73,45 @@ export async function fetchInvoicePdfBlob(
 ): Promise<{ blob: Blob; filename: string }> {
   const response = await fetch(
     `/api/invoices/${encodeURIComponent(invoiceId)}/pdf`,
-    { credentials: "same-origin" },
+    {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+    },
   );
 
   if (!response.ok) {
-    if (response.status === 404) {
-      throw new Error("Invoice not found");
+    const contentType = response.headers.get("content-type");
+    let details = "";
+
+    if (contentType?.includes("application/json")) {
+      const data = await response.json().catch(() => null);
+      details = data?.error || data?.message || "";
+    } else {
+      details = await response.text().catch(() => "");
     }
-    if (response.status === 401) {
-      throw new Error("Please sign in to access this invoice");
-    }
-    throw new Error("Failed to generate invoice PDF");
+
+    throw new Error(
+      `PDF request failed with status ${response.status}${
+        details ? `: ${details}` : ""
+      }`,
+    );
+  }
+
+  const contentType = response.headers.get("content-type");
+  if (!contentType?.includes("application/pdf")) {
+    const text = await response.text();
+    throw new Error(
+      `Expected PDF but received ${contentType || "unknown content type"}: ${text.slice(0, 200)}`,
+    );
   }
 
   const blob = await response.blob();
+
+  if (blob.size === 0) {
+    throw new Error("Received an empty PDF file");
+  }
+
   const filename =
     parseFilenameFromDisposition(response.headers.get("Content-Disposition")) ??
     `invoice-${invoiceNumberToFilename(invoiceId)}.pdf`;

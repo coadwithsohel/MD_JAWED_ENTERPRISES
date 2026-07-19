@@ -21,6 +21,7 @@
     "lucide-react": "^1.25.0",
     "mongoose": "^9.7.4",
     "next": "16.2.10",
+    "pdf-lib": "^1.17.1",
     "pdfkit": "^0.19.1",
     "prisma": "^5.22.0",
     "react": "19.2.4",
