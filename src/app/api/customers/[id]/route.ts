@@ -17,7 +17,7 @@ const UpdateCustomerSchema = z.object({
 });
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { auth, error } = await requireAuth(req);
+  const { error } = await requireAuth(req);
   if (error) return error;
   const { id } = await params;
 

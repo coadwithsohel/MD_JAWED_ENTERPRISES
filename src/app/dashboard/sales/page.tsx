@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Search, ShoppingCart, User, Minus, Plus, Trash2, Loader2, X, CheckCircle2, Printer } from 'lucide-react';
 import Link from 'next/link';
 
@@ -20,7 +20,6 @@ export default function POSPage() {
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(false);
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerResults, setCustomerResults] = useState<Customer[]>([]);
@@ -33,12 +32,6 @@ export default function POSPage() {
   const customerRef = useRef<HTMLDivElement>(null);
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  useEffect(() => { fetchProducts(); }, []);
-  useEffect(() => {
-    const q = search.toLowerCase();
-    setFilteredProducts(q ? products.filter((p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.brand?.name?.toLowerCase() ?? '').includes(q)) : products);
-  }, [search, products]);
-
   const fetchProducts = async () => {
     try {
       const res = await fetch('/api/products?active=true&limit=200');
@@ -46,6 +39,14 @@ export default function POSPage() {
       setProducts(data.products ?? []);
     } catch {}
   };
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { fetchProducts(); }, []);
+  useEffect(() => {
+    const q = search.toLowerCase();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFilteredProducts(q ? products.filter((p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.brand?.name?.toLowerCase() ?? '').includes(q)) : products);
+  }, [search, products]);
 
   const handleCustomerSearch = (val: string) => {
     setCustomerSearch(val);

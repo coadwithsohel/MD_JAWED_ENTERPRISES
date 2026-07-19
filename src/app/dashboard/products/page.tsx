@@ -34,6 +34,7 @@ export default function ProductsPage() {
   const [addingCat, setAddingCat] = useState(false);
 
   useEffect(() => { const t = setTimeout(() => setDebouncedSearch(search), 300); return () => clearTimeout(t); }, [search]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setPage(1); }, [debouncedSearch]);
 
   const fetchAll = useCallback(async () => {
@@ -55,6 +56,7 @@ export default function ProductsPage() {
     finally { setLoading(false); }
   }, [page, debouncedSearch]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const handleAddCategory = async () => {
@@ -172,7 +174,7 @@ export default function ProductsPage() {
                 ].map((f) => (
                   <div key={f.key} className={f.key === 'name' ? 'sm:col-span-2' : ''}>
                     <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
-                    <input required={f.required} value={(form as any)[f.key] ?? ''} onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} placeholder={f.placeholder} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <input required={f.required} value={form[f.key as keyof typeof form] ?? ''} onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} placeholder={f.placeholder} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
                   </div>
                 ))}
                 <div>
@@ -202,7 +204,7 @@ export default function ProductsPage() {
                 ].map((f) => (
                   <div key={f.key}>
                     <label className="block text-sm font-medium text-slate-700 mb-1">{f.label}</label>
-                    <input required={f.required} type={f.type} min="0" value={(form as any)[f.key] ?? ''} onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <input required={f.required} type={f.type} min="0" value={form[f.key as keyof typeof form] ?? ''} onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
                   </div>
                 ))}
                 <div className="sm:col-span-2">

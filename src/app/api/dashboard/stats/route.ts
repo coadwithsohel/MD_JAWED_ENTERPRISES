@@ -5,7 +5,7 @@ import { getOverdueSummary } from '@/lib/overdue';
 import { Decimal } from '@prisma/client/runtime/library';
 
 export async function GET(req: NextRequest) {
-  const { auth, error } = await requireAuth(req);
+  const { error } = await requireAuth(req);
   if (error) return error;
 
   try {

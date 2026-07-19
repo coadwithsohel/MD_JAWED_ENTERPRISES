@@ -4,7 +4,7 @@ import { requireAuth } from '@/lib/auth';
 
 // Categories
 export async function GET(req: NextRequest) {
-  const { auth, error } = await requireAuth(req);
+  const { error } = await requireAuth(req);
   if (error) return error;
 
   const categories = await prisma.category.findMany({
@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const { auth, error } = await requireAuth(req);
+  const { error } = await requireAuth(req);
   if (error) return error;
 
   const body = await req.json();

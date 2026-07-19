@@ -20,7 +20,7 @@ const CreateCustomerSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
-  const { auth, error } = await requireAuth(req);
+  const { error } = await requireAuth(req);
   if (error) return error;
 
   const url = req.nextUrl;

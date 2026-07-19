@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
           customerId,
           saleId: saleId ?? null,
           amount: payAmt,
-          paymentMode: paymentMode as any,
+          paymentMode: paymentMode as "CASH" | "UPI" | "CARD" | "BANK_TRANSFER" | "CHEQUE" | "OTHER",
           referenceNumber: referenceNumber ?? null,
           notes: notes ?? null,
           receivedById: auth.userId,
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
           data: {
             paidAmount: newPaid,
             pendingAmount: newPending,
-            paymentStatus: newPaymentStatus as any,
+            paymentStatus: newPaymentStatus as "PAID" | "PARTIALLY_PAID" | "UNPAID" | "OVERDUE",
           },
         });
 
@@ -131,9 +131,9 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json(result, { status: 201 });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[POST /api/payments]', err);
-    const msg = err.message || 'Server error';
+    const msg = err instanceof Error ? err.message : 'Server error';
     const isClientError = ['not found', 'overpayment', 'must be positive'].some((s) => msg.toLowerCase().includes(s));
     return NextResponse.json({ error: msg }, { status: isClientError ? 400 : 500 });
   }

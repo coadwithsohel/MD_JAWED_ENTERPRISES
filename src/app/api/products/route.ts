@@ -19,7 +19,7 @@ const ProductSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
-  const { auth, error } = await requireAuth(req);
+  const { error } = await requireAuth(req);
   if (error) return error;
 
   const url = req.nextUrl;
@@ -74,7 +74,22 @@ export async function POST(req: NextRequest) {
     }
 
     const product = await prisma.$transaction(async (tx) => {
-      const p = await tx.product.create({ data: parsed.data as any });
+      const p = await tx.product.create({
+        data: {
+          sku: parsed.data.sku,
+          name: parsed.data.name,
+          categoryId: parsed.data.categoryId,
+          brandId: parsed.data.brandId ?? null,
+          purchasePrice: parsed.data.purchasePrice,
+          sellingPrice: parsed.data.sellingPrice,
+          gstPercent: parsed.data.gstPercent,
+          hsnCode: parsed.data.hsnCode ?? null,
+          stockQuantity: parsed.data.stockQuantity,
+          lowStockThreshold: parsed.data.lowStockThreshold,
+          description: parsed.data.description ?? null,
+          barcode: parsed.data.barcode ?? null,
+        },
+      });
 
       if (p.stockQuantity > 0) {
         await tx.inventoryMovement.create({

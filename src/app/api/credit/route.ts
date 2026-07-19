@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/auth';
+import { Prisma } from '@prisma/client';
 
 export async function GET(req: NextRequest) {
-  const { auth, error } = await requireAuth(req);
+  const { error } = await requireAuth(req);
   if (error) return error;
 
   const url = req.nextUrl;
@@ -13,7 +14,7 @@ export async function GET(req: NextRequest) {
   const customerId = url.searchParams.get('customerId');
   const search = url.searchParams.get('search');
 
-  const where: any = {};
+  const where: Prisma.CreditLedgerWhereInput = {};
   if (customerId) where.customerId = customerId;
   if (search) {
     where.customer = {

@@ -70,6 +70,7 @@ export default function CustomersPage() {
     return () => clearTimeout(t);
   }, [search]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setPage(1); }, [debouncedSearch]);
 
   const fetchCustomers = useCallback(async () => {
@@ -85,6 +86,7 @@ export default function CustomersPage() {
     finally { setLoading(false); }
   }, [page, debouncedSearch]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
 
   const handleSubmit = async (e: React.FormEvent) => {

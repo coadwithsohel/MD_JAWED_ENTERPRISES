@@ -3,6 +3,11 @@
 import { useState, useEffect } from "react";
 import { Search, Loader2, FileText, X, MessageCircle } from "lucide-react";
 import Link from "next/link";
+import {
+  buildInvoiceShareContext,
+  sendInvoicePdfOnWhatsApp,
+  type InvoicePdfUiState,
+} from "@/lib/invoice-pdf-client";
 
 interface Sale {
   id: string;
@@ -21,10 +26,6 @@ interface Sale {
   paymentStatus: string;
 }
 
-function normalizeMobile(mobile: string): string {
-  return mobile.replace(/\D/g, "").replace(/^91/, "");
-}
-
 export default function InvoicesPage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,6 +33,9 @@ export default function InvoicesPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [whatsappSaleId, setWhatsappSaleId] = useState<string | null>(null);
+  const [whatsappState, setWhatsappState] = useState<InvoicePdfUiState>("idle");
+  const [whatsappMessage, setWhatsappMessage] = useState<string | null>(null);
   const LIMIT = 20;
 
   useEffect(() => {
@@ -102,29 +106,51 @@ export default function InvoicesPage() {
       OVERDUE: "bg-red-200 text-red-800",
     })[s] ?? "bg-slate-100 text-slate-600";
 
-  const sendInvoiceOnWhatsApp = (sale: Sale) => {
-    if (!sale.customer?.mobile) return;
+  const sendInvoiceOnWhatsApp = async (sale: Sale) => {
+    if (!sale.customer?.mobile || whatsappSaleId) return;
 
-    const mobile = normalizeMobile(sale.customer.mobile);
-    if (!mobile) return;
+    setWhatsappSaleId(sale.id);
+    setWhatsappState("sharing");
+    setWhatsappMessage(null);
 
-    const invoiceUrl = `${window.location.origin}/dashboard/invoices/${sale.id}`;
-    const message = [
-      `Hello ${sale.customer.fullName},`,
-      `Thank you for shopping at MD Javed Enterprises.`,
-      `Invoice No: ${sale.invoiceNumber}`,
-      `Date: ${new Date(sale.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Asia/Kolkata" })}`,
-      `Grand Total: ${fmt(sale.grandTotal)}`,
-      `Paid: ${fmt(sale.paidAmount)}`,
-      `Pending: ${parseFloat(sale.pendingAmount) > 0 ? fmt(sale.pendingAmount) : "₹0"}`,
-      `View invoice: ${invoiceUrl}`,
-    ].join("\n");
+    try {
+      const result = await sendInvoicePdfOnWhatsApp(
+        buildInvoiceShareContext({
+          invoiceId: sale.id,
+          invoiceNumber: sale.invoiceNumber,
+          createdAt: sale.createdAt,
+          customerName: sale.customer.fullName,
+          customerMobile: sale.customer.mobile,
+          grandTotal: sale.grandTotal,
+          paidAmount: sale.paidAmount,
+          pendingAmount: sale.pendingAmount,
+        }),
+      );
 
-    window.open(
-      `https://wa.me/91${mobile}?text=${encodeURIComponent(message)}`,
-      "_blank",
-      "noopener,noreferrer",
-    );
+      if (result === "shared") {
+        setWhatsappState("idle");
+        setWhatsappMessage("Choose WhatsApp in the share sheet to send the PDF.");
+      } else if (result === "cancelled") {
+        setWhatsappState("cancelled");
+        setWhatsappMessage("Share cancelled.");
+      } else {
+        setWhatsappState("downloaded");
+        setWhatsappMessage(
+          "PDF downloaded. WhatsApp opened — please attach the downloaded PDF manually.",
+        );
+      }
+    } catch (err) {
+      setWhatsappState("error");
+      setWhatsappMessage(
+        err instanceof Error ? err.message : "Failed to send invoice PDF",
+      );
+    } finally {
+      setWhatsappSaleId(null);
+      setTimeout(() => {
+        setWhatsappState("idle");
+        setWhatsappMessage(null);
+      }, 6000);
+    }
   };
 
   return (
@@ -135,6 +161,20 @@ export default function InvoicesPage() {
           <p className="text-sm text-slate-500">{total} total invoices</p>
         </div>
       </div>
+
+      {whatsappMessage ? (
+        <div
+          className={`rounded-xl border px-4 py-3 text-sm ${
+            whatsappState === "error"
+              ? "border-red-200 bg-red-50 text-red-800"
+              : whatsappState === "cancelled"
+                ? "border-amber-200 bg-amber-50 text-amber-800"
+                : "border-green-200 bg-green-50 text-green-800"
+          }`}
+        >
+          {whatsappMessage}
+        </div>
+      ) : null}
 
       <div className="relative max-w-sm">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -252,11 +292,17 @@ export default function InvoicesPage() {
                         <div className="flex items-center justify-end gap-2">
                           {s.customer?.mobile ? (
                             <button
-                              onClick={() => sendInvoiceOnWhatsApp(s)}
-                              className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors font-medium"
-                              title="Send invoice on WhatsApp"
+                              onClick={() => void sendInvoiceOnWhatsApp(s)}
+                              disabled={whatsappSaleId === s.id}
+                              className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors font-medium disabled:cursor-not-allowed disabled:opacity-60"
+                              title="Send invoice PDF on WhatsApp"
                             >
-                              <MessageCircle className="h-3 w-3" /> WhatsApp
+                              {whatsappSaleId === s.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <MessageCircle className="h-3 w-3" />
+                              )}{" "}
+                              WhatsApp
                             </button>
                           ) : null}
                           <Link

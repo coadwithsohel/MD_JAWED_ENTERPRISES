@@ -1,9 +1,26 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Printer, ArrowLeft, Phone, MessageCircle } from "lucide-react";
+import {
+  Printer,
+  ArrowLeft,
+  Phone,
+  MessageCircle,
+  Download,
+  Share2,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+} from "lucide-react";
+import {
+  buildInvoiceShareContext,
+  downloadInvoicePdf,
+  sendInvoicePdfOnWhatsApp,
+  shareInvoicePdfFile,
+  type InvoicePdfUiState,
+} from "@/lib/invoice-pdf-client";
 
 interface SaleItem {
   id: string;
@@ -65,10 +82,6 @@ interface Settings {
   termsAndConditions?: string | null;
 }
 
-function normalizeMobile(mobile: string): string {
-  return mobile.replace(/\D/g, "").replace(/^91/, "");
-}
-
 export default function InvoicePrintView({
   sale,
   settings,
@@ -79,6 +92,10 @@ export default function InvoicePrintView({
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const shouldPrint = searchParams.get("print") === "1";
+
+  const [pdfState, setPdfState] = useState<InvoicePdfUiState>("idle");
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const actionInFlight = useRef(false);
 
   useEffect(() => {
     if (shouldPrint) {
@@ -107,109 +124,213 @@ export default function InvoicePrintView({
       minute: "2-digit",
       timeZone: "Asia/Kolkata",
     });
+
+  const shareContext = buildInvoiceShareContext({
+    invoiceId: sale.id,
+    invoiceNumber: sale.invoiceNumber,
+    createdAt: sale.createdAt,
+    customerName: sale.customer?.fullName,
+    customerMobile: sale.customer?.mobile,
+    businessName: settings?.businessName,
+    grandTotal: sale.grandTotal,
+    paidAmount: sale.paidAmount,
+    pendingAmount: sale.pendingAmount,
+  });
+
+  const isBusy = pdfState === "loading" || pdfState === "sharing";
+
+  const runPdfAction = async (
+    mode: "download" | "share" | "whatsapp",
+    nextState: "loading" | "sharing",
+  ) => {
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
+    setPdfState(nextState);
+    setStatusMessage(null);
+
+    try {
+      if (mode === "download") {
+        const { filename } = await downloadInvoicePdf(sale.id);
+        setPdfState("downloaded");
+        setStatusMessage(`PDF downloaded: ${filename}`);
+      } else if (mode === "share") {
+        const result = await shareInvoicePdfFile(shareContext);
+        if (result === "shared") {
+          setPdfState("idle");
+          setStatusMessage("Invoice PDF shared successfully.");
+        } else if (result === "cancelled") {
+          setPdfState("cancelled");
+          setStatusMessage("Share cancelled.");
+        } else {
+          setPdfState("downloaded");
+          setStatusMessage(
+            "File sharing is not supported on this device. The PDF has been downloaded.",
+          );
+        }
+      } else {
+        const result = await sendInvoicePdfOnWhatsApp(shareContext);
+        if (result === "shared") {
+          setPdfState("idle");
+          setStatusMessage("Choose WhatsApp in the share sheet to send the PDF.");
+        } else if (result === "cancelled") {
+          setPdfState("cancelled");
+          setStatusMessage("Share cancelled.");
+        } else {
+          setPdfState("downloaded");
+          setStatusMessage(
+            sale.customer?.mobile
+              ? "PDF downloaded. WhatsApp opened — please attach the downloaded PDF manually."
+              : "PDF downloaded. File sharing is not supported on this device.",
+          );
+        }
+      }
+    } catch (err) {
+      setPdfState("error");
+      setStatusMessage(
+        err instanceof Error ? err.message : "Failed to process invoice PDF",
+      );
+    } finally {
+      actionInFlight.current = false;
+      setTimeout(() => {
+        setPdfState((current) =>
+          current === "downloaded" ||
+          current === "error" ||
+          current === "cancelled"
+            ? "idle"
+            : current,
+        );
+        setStatusMessage(null);
+      }, 6000);
+    }
+  };
+
   const openPrintView = () => {
-    const printUrl = `${pathname}?print=1`;
-    window.location.href = printUrl;
+    window.location.href = `${pathname}?print=1`;
   };
 
-  const sendInvoiceOnWhatsApp = () => {
-    const mobile = sale.customer?.mobile
-      ? normalizeMobile(sale.customer.mobile)
-      : "";
-    if (!mobile) return;
-
-    const customerName = sale.customer?.fullName || "Customer";
-    const businessName = settings?.businessName ?? "MD JAVED ENTERPRISES";
-    const invoiceLink = `${window.location.origin}${pathname}`;
-    const message = [
-      `Hello ${customerName},`,
-      `Thank you for shopping at ${businessName}.`,
-      `Invoice No: ${sale.invoiceNumber}`,
-      `Date: ${fmtDate(sale.createdAt)}`,
-      `Grand Total: ${fmt(sale.grandTotal)}`,
-      `Paid: ${fmt(sale.paidAmount)}`,
-      sale.pendingAmount && parseFloat(sale.pendingAmount) > 0
-        ? `Pending: ${fmt(sale.pendingAmount)}`
-        : `Pending: ₹0.00`,
-      `View invoice: ${invoiceLink}`,
-    ].join("\n");
-
-    const whatsappUrl = `https://wa.me/91${mobile}?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, "_blank", "noopener,noreferrer");
-  };
+  const statusTone =
+    pdfState === "error"
+      ? "border-red-200 bg-red-50 text-red-800"
+      : pdfState === "cancelled"
+        ? "border-amber-200 bg-amber-50 text-amber-800"
+        : "border-green-200 bg-green-50 text-green-800";
 
   return (
     <>
       {/* Print Controls — hidden on print */}
-      <div className="no-print mb-6 flex items-center justify-between">
-        <Link
-          href="/dashboard/invoices"
-          className="flex items-center gap-2 text-slate-600 hover:text-slate-900 text-sm font-medium"
-        >
-          <ArrowLeft className="h-4 w-4" /> Back to Sales History
-        </Link>
-        <div className="flex items-center gap-3">
-          {sale.customer?.mobile ? (
-            <button
-              onClick={sendInvoiceOnWhatsApp}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
-            >
-              <MessageCircle className="h-4 w-4" /> Send on WhatsApp
-            </button>
-          ) : null}
-          <button
-            onClick={openPrintView}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
+      <div className="no-print mb-6 space-y-3">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <Link
+            href="/dashboard/invoices"
+            className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900"
           >
-            <Printer className="h-4 w-4" /> Print Invoice
-          </button>
+            <ArrowLeft className="h-4 w-4" /> Back to Sales History
+          </Link>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <button
+              onClick={() => runPdfAction("download", "loading")}
+              disabled={isBusy}
+              className="flex items-center gap-2 rounded-xl bg-slate-700 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {pdfState === "loading" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              Download PDF
+            </button>
+            <button
+              onClick={openPrintView}
+              disabled={isBusy}
+              className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Printer className="h-4 w-4" /> Print Invoice
+            </button>
+            <button
+              onClick={() => runPdfAction("share", "sharing")}
+              disabled={isBusy}
+              className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {pdfState === "sharing" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Share2 className="h-4 w-4" />
+              )}
+              Share PDF
+            </button>
+            {sale.customer?.mobile ? (
+              <button
+                onClick={() => runPdfAction("whatsapp", "sharing")}
+                disabled={isBusy}
+                className="flex items-center gap-2 rounded-xl bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {pdfState === "sharing" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <MessageCircle className="h-4 w-4" />
+                )}
+                Send PDF on WhatsApp
+              </button>
+            ) : null}
+          </div>
         </div>
+
+        {statusMessage ? (
+          <div
+            className={`flex items-start gap-2 rounded-xl border px-4 py-3 text-sm ${statusTone}`}
+          >
+            {pdfState === "error" ? (
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            ) : (
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+            )}
+            <p>{statusMessage}</p>
+          </div>
+        ) : null}
       </div>
 
       {/* Invoice — visible always, printed cleanly */}
       <div
         id="invoice"
-        className="bg-white rounded-2xl border border-slate-200 shadow-sm max-w-4xl mx-auto p-8 print:shadow-none print:border-none print:rounded-none print:p-0 print:max-w-full"
+        className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm print:max-w-full print:rounded-none print:border-none print:p-0 print:shadow-none"
       >
         {/* Header */}
-        <div className="flex items-start justify-between pb-6 border-b border-slate-200 mb-6">
+        <div className="mb-6 flex items-start justify-between border-b border-slate-200 pb-6">
           <div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight">
+            <h1 className="text-3xl font-black tracking-tight text-slate-900">
               {settings?.businessName ?? "MD JAVED ENTERPRISES"}
             </h1>
             {settings?.tagline && (
-              <p className="text-slate-500 text-sm mt-0.5">
-                {settings.tagline}
-              </p>
+              <p className="mt-0.5 text-sm text-slate-500">{settings.tagline}</p>
             )}
             {settings?.primaryAddress && (
-              <p className="text-slate-500 text-sm mt-1">
+              <p className="mt-1 text-sm text-slate-500">
                 {settings.primaryAddress}
                 {settings.city ? `, ${settings.city}` : ""}
                 {settings.state ? `, ${settings.state}` : ""}
               </p>
             )}
             {settings?.supportPhone && (
-              <p className="text-slate-500 text-sm flex items-center gap-1 mt-0.5">
+              <p className="mt-0.5 flex items-center gap-1 text-sm text-slate-500">
                 <Phone className="h-3 w-3" /> {settings.supportPhone}
               </p>
             )}
             {settings?.gstNumber && (
-              <p className="text-slate-500 text-xs mt-1">
+              <p className="mt-1 text-xs text-slate-500">
                 GSTIN: {settings.gstNumber}
               </p>
             )}
           </div>
           <div className="text-right">
             <h2 className="text-2xl font-bold text-blue-600">INVOICE</h2>
-            <p className="text-slate-900 font-mono font-bold text-lg">
+            <p className="font-mono text-lg font-bold text-slate-900">
               {sale.invoiceNumber}
             </p>
-            <p className="text-slate-500 text-sm mt-1">
+            <p className="mt-1 text-sm text-slate-500">
               {fmtDate(sale.createdAt)} at {fmtTime(sale.createdAt)}
             </p>
             <span
-              className={`inline-block mt-2 px-3 py-0.5 rounded-full text-xs font-semibold ${
+              className={`mt-2 inline-block rounded-full px-3 py-0.5 text-xs font-semibold ${
                 sale.paymentStatus === "PAID"
                   ? "bg-green-100 text-green-800"
                   : sale.paymentStatus === "PARTIALLY_PAID"
@@ -223,9 +344,9 @@ export default function InvoicePrintView({
         </div>
 
         {/* Bill To */}
-        <div className="grid grid-cols-2 gap-6 mb-6">
+        <div className="mb-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
           <div>
-            <h3 className="text-xs font-semibold text-slate-400 uppercase mb-2">
+            <h3 className="mb-2 text-xs font-semibold uppercase text-slate-400">
               Bill To
             </h3>
             {sale.customer ? (
@@ -233,10 +354,10 @@ export default function InvoicePrintView({
                 <p className="text-sm font-semibold text-slate-900">
                   {sale.customer.fullName}
                 </p>
-                <p className="text-xs text-slate-500 font-mono">
+                <p className="font-mono text-xs text-slate-500">
                   {sale.customer.customerCode}
                 </p>
-                <p className="text-sm text-slate-600 flex items-center gap-1 mt-0.5">
+                <p className="mt-0.5 flex items-center gap-1 text-sm text-slate-600">
                   <Phone className="h-3 w-3" />
                   {sale.customer.mobile}
                 </p>
@@ -246,7 +367,7 @@ export default function InvoicePrintView({
                   </p>
                 )}
                 {sale.customer.address && (
-                  <p className="text-sm text-slate-600 mt-0.5">
+                  <p className="mt-0.5 text-sm text-slate-600">
                     {sale.customer.address}
                   </p>
                 )}
@@ -259,38 +380,36 @@ export default function InvoicePrintView({
                 )}
               </>
             ) : (
-              <p className="text-sm text-slate-500 italic">Walk-in Customer</p>
+              <p className="text-sm italic text-slate-500">Walk-in Customer</p>
             )}
           </div>
-          <div className="text-right">
+          <div className="sm:text-right">
             <div className="inline-block text-left">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase mb-2">
+              <h3 className="mb-2 text-xs font-semibold uppercase text-slate-400">
                 Sale Details
               </h3>
               <table className="text-sm">
                 <tbody>
                   <tr>
-                    <td className="text-slate-500 pr-4">Type</td>
-                    <td className="font-medium text-slate-900">
-                      {sale.saleType}
-                    </td>
+                    <td className="pr-4 text-slate-500">Type</td>
+                    <td className="font-medium text-slate-900">{sale.saleType}</td>
                   </tr>
                   <tr>
-                    <td className="text-slate-500 pr-4">Date</td>
+                    <td className="pr-4 text-slate-500">Date</td>
                     <td className="font-medium text-slate-900">
                       {fmtDate(sale.createdAt)}
                     </td>
                   </tr>
                   {sale.dueDate && (
                     <tr>
-                      <td className="text-slate-500 pr-4">Due Date</td>
+                      <td className="pr-4 text-slate-500">Due Date</td>
                       <td className="font-semibold text-red-600">
                         {fmtDate(sale.dueDate)}
                       </td>
                     </tr>
                   )}
                   <tr>
-                    <td className="text-slate-500 pr-4">Billed By</td>
+                    <td className="pr-4 text-slate-500">Billed By</td>
                     <td className="font-medium text-slate-900">
                       {sale.createdBy.fullName}
                     </td>
@@ -302,29 +421,29 @@ export default function InvoicePrintView({
         </div>
 
         {/* Items Table */}
-        <div className="mb-6">
-          <table className="w-full text-sm">
+        <div className="mb-6 overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
-              <tr className="bg-slate-50 rounded-lg">
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase">
+              <tr className="rounded-lg bg-slate-50">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">
                   #
                 </th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">
                   Product
                 </th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">
                   HSN
                 </th>
-                <th className="text-center px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase">
+                <th className="px-4 py-2.5 text-center text-xs font-semibold uppercase text-slate-500">
                   Qty
                 </th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase">
+                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase text-slate-500">
                   Rate
                 </th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase">
+                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase text-slate-500">
                   GST
                 </th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase">
+                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase text-slate-500">
                   Total
                 </th>
               </tr>
@@ -337,24 +456,22 @@ export default function InvoicePrintView({
                     <p className="font-medium text-slate-900">
                       {item.product.name}
                     </p>
-                    <p className="text-xs text-slate-400 font-mono">
+                    <p className="font-mono text-xs text-slate-400">
                       {item.product.sku}
                     </p>
                   </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs">
+                  <td className="px-4 py-3 text-xs text-slate-500">
                     {item.product.hsnCode || "—"}
                   </td>
-                  <td className="px-4 py-3 text-center text-slate-900 font-medium">
+                  <td className="px-4 py-3 text-center font-medium text-slate-900">
                     {item.quantity}
                   </td>
                   <td className="px-4 py-3 text-right text-slate-900">
                     ₹{parseFloat(item.unitPrice).toLocaleString("en-IN")}
                   </td>
-                  <td className="px-4 py-3 text-right text-slate-500 text-xs">
+                  <td className="px-4 py-3 text-right text-xs text-slate-500">
                     {item.gstPercent}%<br />
-                    <span className="text-slate-400">
-                      {fmt(item.gstAmount)}
-                    </span>
+                    <span className="text-slate-400">{fmt(item.gstAmount)}</span>
                   </td>
                   <td className="px-4 py-3 text-right font-semibold text-slate-900">
                     {fmt(item.lineTotal)}
@@ -366,8 +483,8 @@ export default function InvoicePrintView({
         </div>
 
         {/* Totals */}
-        <div className="flex justify-end mb-6">
-          <div className="w-72 space-y-2">
+        <div className="mb-6 flex justify-end">
+          <div className="w-full max-w-xs space-y-2 sm:w-72">
             <div className="flex justify-between text-sm text-slate-500">
               <span>Subtotal</span>
               <span>{fmt(sale.subtotal)}</span>
@@ -382,16 +499,16 @@ export default function InvoicePrintView({
               <span>GST</span>
               <span>{fmt(sale.gstAmount)}</span>
             </div>
-            <div className="flex justify-between text-base font-bold text-slate-900 pt-2 border-t border-slate-200">
+            <div className="flex justify-between border-t border-slate-200 pt-2 text-base font-bold text-slate-900">
               <span>Grand Total</span>
               <span className="text-blue-600">{fmt(sale.grandTotal)}</span>
             </div>
-            <div className="flex justify-between text-sm text-green-700 font-medium">
+            <div className="flex justify-between text-sm font-medium text-green-700">
               <span>Amount Paid</span>
               <span>{fmt(sale.paidAmount)}</span>
             </div>
             {parseFloat(sale.pendingAmount) > 0 && (
-              <div className="flex justify-between text-sm font-bold text-red-600 bg-red-50 px-3 py-2 rounded-lg">
+              <div className="flex justify-between rounded-lg bg-red-50 px-3 py-2 text-sm font-bold text-red-600">
                 <span>Amount Pending</span>
                 <span>{fmt(sale.pendingAmount)}</span>
               </div>
@@ -402,14 +519,14 @@ export default function InvoicePrintView({
         {/* Payments */}
         {sale.payments.length > 0 && (
           <div className="mb-6">
-            <h3 className="text-sm font-semibold text-slate-700 mb-2">
+            <h3 className="mb-2 text-sm font-semibold text-slate-700">
               Payment History
             </h3>
             <div className="space-y-1">
               {sale.payments.map((p) => (
                 <div
                   key={p.id}
-                  className="flex items-center justify-between text-sm bg-green-50 border border-green-100 rounded-lg px-3 py-2"
+                  className="flex items-center justify-between rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-sm"
                 >
                   <span className="text-green-800">
                     {p.paymentMode}{" "}
@@ -419,7 +536,7 @@ export default function InvoicePrintView({
                     <span className="font-semibold text-green-900">
                       {fmt(p.amount)}
                     </span>
-                    <span className="text-green-600 text-xs ml-2">
+                    <span className="ml-2 text-xs text-green-600">
                       {fmtDate(p.paymentDate)}
                     </span>
                   </div>
@@ -430,11 +547,11 @@ export default function InvoicePrintView({
         )}
 
         {/* Footer */}
-        <div className="border-t border-slate-200 pt-6 grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 gap-6 border-t border-slate-200 pt-6 sm:grid-cols-2">
           <div>
             {settings?.termsAndConditions && (
               <>
-                <p className="text-xs font-semibold text-slate-500 uppercase mb-1">
+                <p className="mb-1 text-xs font-semibold uppercase text-slate-500">
                   Terms & Conditions
                 </p>
                 <p className="text-xs text-slate-400">
@@ -442,21 +559,21 @@ export default function InvoicePrintView({
                 </p>
               </>
             )}
-            <p className="text-xs text-slate-400 mt-3">
-              Thank you for your business! 🙏
+            <p className="mt-3 text-xs text-slate-400">
+              Thank you for your business!
             </p>
           </div>
-          <div className="text-right">
-            <p className="text-xs text-slate-400 mb-8">Authorized Signatory</p>
-            <p className="text-xs font-semibold text-slate-700 border-t border-slate-300 pt-1 inline-block min-w-[120px]">
+          <div className="sm:text-right">
+            <p className="mb-8 text-xs text-slate-400">Authorized Signatory</p>
+            <p className="inline-block min-w-[120px] border-t border-slate-300 pt-1 text-xs font-semibold text-slate-700">
               {settings?.businessName ?? "MD Javed Enterprises"}
             </p>
           </div>
         </div>
 
         {sale.notes && (
-          <div className="mt-4 bg-slate-50 rounded-lg p-3">
-            <p className="text-xs font-semibold text-slate-500 mb-1">Notes</p>
+          <div className="mt-4 rounded-lg bg-slate-50 p-3">
+            <p className="mb-1 text-xs font-semibold text-slate-500">Notes</p>
             <p className="text-sm text-slate-600">{sale.notes}</p>
           </div>
         )}

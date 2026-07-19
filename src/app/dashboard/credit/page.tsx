@@ -38,6 +38,7 @@ export default function CreditPage() {
     } catch {} finally { setLoading(false); }
   }, [debouncedSearch]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const fetchCustomersWithDues = async (q: string) => {
