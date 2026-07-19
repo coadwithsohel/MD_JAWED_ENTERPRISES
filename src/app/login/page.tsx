@@ -111,7 +111,7 @@ export default function LoginPage() {
                       mobile: e.target.value.replace(/\D/g, ""),
                     })
                   }
-                  placeholder="9999999999"
+                  placeholder="7020231921"
                   className="w-full px-4 py-3 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                 />
               </div>

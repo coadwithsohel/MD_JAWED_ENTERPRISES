@@ -202,14 +202,14 @@ export default function SettingsPage() {
               value={getFieldValue("supportPhone")}
               onChange={handleFieldChange("supportPhone")}
               type="tel"
-              placeholder="9999999999"
+              placeholder="7020231921"
             />
             <InputField
               label="WhatsApp Number"
               value={getFieldValue("whatsappNumber")}
               onChange={handleFieldChange("whatsappNumber")}
               type="tel"
-              placeholder="9999999999"
+              placeholder="7020231921"
             />
             <div className="sm:col-span-2">
               <InputField
