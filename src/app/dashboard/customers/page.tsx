@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Search, Plus, Loader2, X, UserPlus, Phone, MapPin } from 'lucide-react';
+import Link from 'next/link';
+import { Search, Plus, Loader2, X, UserPlus, Phone, MapPin, ChevronRight } from 'lucide-react';
 
 interface Customer {
   id: string; customerCode: string; fullName: string; mobile: string;
@@ -16,40 +17,54 @@ const initialForm = {
 
 function CustomerCard({ c }: { c: Customer }) {
   const balance = parseFloat(c.currentBalance);
+  const isDebit = balance > 0;
+  const isCredit = balance < 0;
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 hover:shadow-md transition-shadow">
+    <Link
+      href={`/dashboard/customers/${c.id}`}
+      className="group block bg-white border border-slate-200 rounded-xl p-5 hover:shadow-md hover:border-slate-300 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+      aria-label={`View ledger for ${c.fullName}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded font-medium">{c.customerCode}</span>
-            {!c.isActive && <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded">Inactive</span>}
+            <span className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded font-medium border border-blue-100">{c.customerCode}</span>
+            {!c.isActive && <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded border border-slate-200">Inactive</span>}
           </div>
-          <p className="mt-1 text-base font-semibold text-slate-900 truncate">{c.fullName}</p>
+          <p className="mt-1.5 text-base font-semibold text-slate-900 truncate group-hover:text-blue-700 transition-colors">{c.fullName}</p>
           <div className="flex items-center gap-1 mt-1 text-sm text-slate-500">
-            <Phone className="h-3 w-3" /> {c.mobile}
+            <Phone className="h-3 w-3" aria-hidden="true" /> {c.mobile}
             {c.alternateMobile && <span className="ml-2 text-slate-400">/ {c.alternateMobile}</span>}
           </div>
           {c.city && (
             <div className="flex items-center gap-1 mt-0.5 text-xs text-slate-400">
-              <MapPin className="h-3 w-3" /> {c.city}{c.state && `, ${c.state}`}
+              <MapPin className="h-3 w-3" aria-hidden="true" /> {c.city}{c.state && `, ${c.state}`}
             </div>
           )}
         </div>
-        <div className="text-right flex-shrink-0">
-          {balance > 0 ? (
+        <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
+          {isDebit ? (
             <>
               <p className="text-xs text-slate-400">Outstanding</p>
-              <p className="font-bold text-red-600">₹{balance.toLocaleString('en-IN')}</p>
+              <p className="font-bold text-rose-600 tabular-nums text-sm">₹{balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+              <span className="text-xs font-bold bg-rose-50 text-rose-600 border border-rose-200 px-1.5 py-0.5 rounded">Dr</span>
+            </>
+          ) : isCredit ? (
+            <>
+              <p className="text-xs text-slate-400">Advance</p>
+              <p className="font-bold text-emerald-600 tabular-nums text-sm">₹{Math.abs(balance).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+              <span className="text-xs font-bold bg-emerald-50 text-emerald-600 border border-emerald-200 px-1.5 py-0.5 rounded">Cr</span>
             </>
           ) : (
-            <p className="text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded-lg">Cleared ✓</p>
+            <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg">Cleared ✓</span>
           )}
           {parseFloat(c.creditLimit) > 0 && (
-            <p className="text-xs text-slate-400 mt-1">Limit: ₹{parseFloat(c.creditLimit).toLocaleString('en-IN')}</p>
+            <p className="text-xs text-slate-400 mt-0.5">Limit: ₹{parseFloat(c.creditLimit).toLocaleString('en-IN')}</p>
           )}
+          <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-blue-400 transition-colors mt-1" aria-hidden="true" />
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
 

@@ -12,10 +12,21 @@ body { margin: 0; }
 }
 
 @media print {
-  .no-print, nav, header, aside, .sidebar, .print-hide { display: none !important; }
-  body { background: white !important; }
-  .print-only { display: block !important; }
-  @page { margin: 15mm; }
+  .no-print, nav, header, aside, .sidebar, .print-hide, .ledger-no-print { display: none !important; }
+  body { background: white !important; font-size: 12px; color: #000; }
+  .print-only, .ledger-print-show { display: block !important; }
+  @page { margin: 15mm; size: A4; }
+
+  /* Ledger table print styles */
+  .ledger-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .ledger-table th { background: #f1f5f9 !important; color: #334155 !important; border-bottom: 2px solid #cbd5e1; padding: 6px 8px; text-align: left; font-weight: 600; }
+  .ledger-table td { padding: 5px 8px; border-bottom: 1px solid #e2e8f0; }
+  .ledger-table tfoot td { border-top: 2px solid #334155; font-weight: bold; background: #f8fafc; }
+  .ledger-page { box-shadow: none !important; border: 1px solid #e2e8f0 !important; break-inside: avoid; }
+
+  /* Page break helpers */
+  .page-break-before { page-break-before: always; }
+  .page-break-avoid { page-break-inside: avoid; }
 }
 
 .print-only { display: none; }
