@@ -135,10 +135,14 @@ export async function GET(
     }
   }
 
-  // 6. Fetch all ledger entries for this customer (no N+1: eager-load relations)
+  // 6. Fetch all NON-opening-balance ledger entries for this customer
+  //    Opening balance is stored on Customer.openingBalance and represented
+  //    as a synthetic first row. DB OPENING_BALANCE rows are informational
+  //    markers only and must NOT be double-counted in totals or running balance.
   const ledgerRecords = await prisma.creditLedger.findMany({
     where: {
       customerId,
+      transactionType: { not: 'OPENING_BALANCE' },
       ...(Object.keys(dateFilter).length ? { createdAt: dateFilter } : {}),
     },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -168,8 +172,6 @@ export async function GET(
   });
 
   // 7. Also fetch Sales not yet in CreditLedger (edge case safety)
-  //    Primary source is CreditLedger; we only supplement missing sales.
-  //    This avoids double-counting.
   const ledgerSaleIds = new Set(
     ledgerRecords.filter((r) => r.saleId).map((r) => r.saleId as string),
   );
@@ -232,10 +234,10 @@ export async function GET(
     sortKey: string; // for stable sort: ISO + id
   }> = [];
 
-  // From CreditLedger records
+  // From CreditLedger records (OPENING_BALANCE rows already excluded above)
   for (const r of ledgerRecords) {
     const vType2 = mapLedgerType(r.transactionType);
-    const isDebit = ['OPENING_BALANCE', 'SALE', 'DEBIT_NOTE'].includes(vType2);
+    const isDebit = ['SALE', 'DEBIT_NOTE'].includes(vType2);
     const amtPaise = toPaise(r.amount);
 
     let particulars = r.description ?? vType2.replace(/_/g, ' ');
@@ -327,10 +329,14 @@ export async function GET(
   rawEntries.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
   // 10. Calculate running balance (integer paise)
+  //     Option A: opening balance stored separately on Customer.
+  //     Start runningBalance with openingBalance.
+  //     Do NOT include opening balance in totalDebit or totalCredit.
+  //     Do NOT include DB OPENING_BALANCE rows (already excluded above).
   const openingPaise = toPaise(customer.openingBalance);
   let runningPaise = openingPaise;
 
-  // Prepend opening balance as first entry (if non-zero or always show it)
+  // Prepend opening balance as the informational first row (excluded from totals)
   const openingEntry: typeof rawEntries[0] = {
     id: 'opening-balance',
     date: customer.createdAt,
@@ -347,16 +353,19 @@ export async function GET(
   const allEntries = [openingEntry, ...rawEntries];
 
   // 11. Calculate totals and running balances
+  //     IMPORTANT: Only transaction rows (not opening balance) count toward totals
   let totalDebitPaise = 0;
   let totalCreditPaise = 0;
 
   const processedEntries: LedgerEntry[] = allEntries.map((entry) => {
     if (entry.id === 'opening-balance') {
+      // Reset running balance to opening (handles date-filter edge cases)
       runningPaise = openingPaise;
     } else {
       runningPaise = runningPaise + entry.debitPaise - entry.creditPaise;
     }
 
+    // Opening balance entry is informational only — excluded from totals
     if (entry.id !== 'opening-balance') {
       totalDebitPaise += entry.debitPaise;
       totalCreditPaise += entry.creditPaise;
@@ -377,6 +386,7 @@ export async function GET(
     };
   });
 
+  // closingBalance = openingBalance + transactionDebit - transactionCredit
   const closingPaise = openingPaise + totalDebitPaise - totalCreditPaise;
 
   // 12. Apply voucher type filter (after running balance calculation)
@@ -389,7 +399,7 @@ export async function GET(
   const totalPages = Math.ceil(totalEntries / limit);
   const paginatedEntries = filteredEntries.slice((page - 1) * limit, page * limit);
 
-  // 14. Summary
+  // 14. Summary — transactionDebit and transactionCredit reflect actual transactions only
   const summary = {
     openingBalance: fromPaise(Math.abs(openingPaise)),
     openingBalanceLabel: balanceLabel(openingPaise),

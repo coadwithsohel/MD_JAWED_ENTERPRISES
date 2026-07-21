@@ -138,6 +138,7 @@ model User {
   notifications Notification[]
   auditLogs     AuditLog[]
   importBatches CustomerImportBatch[]
+  tallyImportBatches TallyImportBatch[]
 }
 
 model ShopSettings {
@@ -211,6 +212,7 @@ model Customer {
   ledgers               CreditLedger[]
   reminders             Reminder[]
   importRows            CustomerImportRow[]
+  tallyVouchers         TallyVoucher[]
 
   @@index([fullName])
   @@index([mobile])
@@ -502,4 +504,66 @@ model CustomerImportRow {
 
   @@index([importBatchId])
   @@index([resultStatus])
+}
+
+// ─── Tally Voucher Import ────────────────────────────────────────────────────
+
+model TallyImportBatch {
+  id              String   @id @default(cuid())
+  originalFileName String
+  storedFileName  String?
+  importDate      DateTime @default(now())
+  importedById    String
+  importedBy      User     @relation(fields: [importedById], references: [id])
+  totalVouchers   Int      @default(0)
+  salesCount      Int      @default(0)
+  receiptCount    Int      @default(0)
+  debitNoteCount  Int      @default(0)
+  creditNoteCount Int      @default(0)
+  duplicateCount  Int      @default(0)
+  skippedCount    Int      @default(0)
+  errorCount      Int      @default(0)
+  debitTotal      Decimal  @default(0) @db.Decimal(14, 2)
+  creditTotal     Decimal  @default(0) @db.Decimal(14, 2)
+  status          ImportStatus @default(UPLOADED)
+  errorSummary    Json?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  vouchers        TallyVoucher[]
+
+  @@index([importedById])
+  @@index([createdAt])
+  @@index([status])
+}
+
+model TallyVoucher {
+  id              String   @id @default(cuid())
+  importBatchId   String
+  importBatch     TallyImportBatch @relation(fields: [importBatchId], references: [id])
+  tallyGuid       String?  @unique
+  tallyRemoteId   String?
+  tallyMasterId   String?
+  voucherKey      String?
+  sourceFileName  String?
+  customerName    String?  // Original customer name from Tally
+  customerId      String?  // Matched customer ID
+  customer        Customer? @relation(fields: [customerId], references: [id])
+  voucherDate     DateTime
+  voucherType     String   // 'SALES' | 'RECEIPT' | 'DEBIT_NOTE' | 'CREDIT_NOTE' | 'OPENING_BALANCE'
+  voucherNumber   String?
+  debit           Decimal  @default(0) @db.Decimal(14, 2)
+  credit          Decimal  @default(0) @db.Decimal(14, 2)
+  narration       String?
+  reference       String?
+  isDuplicate     Boolean  @default(false)
+  isSkipped       Boolean  @default(false)
+  errorMessage    String?
+  importStatus    ImportRowStatus @default(VALID)
+  ledgerEntryId   String?  // Link to created CreditLedger entry, if any
+  createdAt       DateTime @default(now())
+
+  @@index([importBatchId])
+  @@index([customerId])
+  @@index([tallyGuid])
+  @@index([voucherDate])
 }
