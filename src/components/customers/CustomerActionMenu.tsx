@@ -65,7 +65,7 @@ export default function CustomerActionMenu({
     }
   }, [open]);
 
-  // Collision-aware positioning
+  // Viewport-aware positioning
   useEffect(() => {
     if (open && dropdownRef.current && ref.current) {
       const triggerRect = ref.current.getBoundingClientRect();
@@ -78,10 +78,20 @@ export default function CustomerActionMenu({
       const rightSpace = viewportWidth - triggerRect.right;
       const leftSpace = triggerRect.left;
       if (rightSpace >= dropdownRect.width || rightSpace >= leftSpace) {
-        style.right = 0;
-        style.left = 'auto';
+        // Align right edge of dropdown with right edge of trigger
+        const leftPos = Math.max(
+          8,
+          Math.min(triggerRect.right - dropdownRect.width, viewportWidth - dropdownRect.width - 8)
+        );
+        style.left = `${leftPos}px`;
+        style.right = 'auto';
       } else {
-        style.left = 0;
+        // Align left edge of dropdown with left edge of trigger
+        const leftPos = Math.max(
+          8,
+          Math.min(triggerRect.left, viewportWidth - dropdownRect.width - 8)
+        );
+        style.left = `${leftPos}px`;
         style.right = 'auto';
       }
 
@@ -89,13 +99,11 @@ export default function CustomerActionMenu({
       const bottomSpace = viewportHeight - triggerRect.bottom;
       const topSpace = triggerRect.top;
       if (bottomSpace >= dropdownRect.height || bottomSpace >= topSpace) {
-        style.top = '100%';
+        style.top = `${triggerRect.bottom + 4}px`;
         style.bottom = 'auto';
-        style.marginTop = '4px';
       } else {
-        style.bottom = '100%';
+        style.bottom = `${viewportHeight - triggerRect.top + 4}px`;
         style.top = 'auto';
-        style.marginBottom = '4px';
       }
 
       setDropdownStyle(style);
@@ -122,7 +130,7 @@ export default function CustomerActionMenu({
       {open && (
         <div
           ref={dropdownRef}
-          className="absolute z-50 w-56 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden py-1"
+          className="fixed z-50 w-56 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden py-1"
           style={dropdownStyle}
           role="menu"
           aria-label="Customer actions menu"

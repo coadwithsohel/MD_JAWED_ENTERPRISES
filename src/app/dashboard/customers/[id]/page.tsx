@@ -471,14 +471,22 @@ function InlineActionMenu({
       const vh = window.innerHeight;
       const style: React.CSSProperties = {};
 
-      // Horizontal
+      // Horizontal: prefer right-aligned, flip if off-screen
       const rightSpace = vw - triggerRect.right;
       const leftSpace = triggerRect.left;
       if (rightSpace >= dropdownRect.width || rightSpace >= leftSpace) {
-        style.right = 0;
-        style.left = 'auto';
+        const leftPos = Math.max(
+          8,
+          Math.min(triggerRect.right - dropdownRect.width, vw - dropdownRect.width - 8)
+        );
+        style.left = `${leftPos}px`;
+        style.right = 'auto';
       } else {
-        style.left = 0;
+        const leftPos = Math.max(
+          8,
+          Math.min(triggerRect.left, vw - dropdownRect.width - 8)
+        );
+        style.left = `${leftPos}px`;
         style.right = 'auto';
       }
 
@@ -486,13 +494,11 @@ function InlineActionMenu({
       const bottomSpace = vh - triggerRect.bottom;
       const topSpace = triggerRect.top;
       if (bottomSpace >= dropdownRect.height || bottomSpace >= topSpace) {
-        style.top = '100%';
+        style.top = `${triggerRect.bottom + 4}px`;
         style.bottom = 'auto';
-        style.marginTop = '4px';
       } else {
-        style.bottom = '100%';
+        style.bottom = `${vh - triggerRect.top + 4}px`;
         style.top = 'auto';
-        style.marginBottom = '4px';
       }
 
       setDropdownStyle(style);
@@ -513,7 +519,7 @@ function InlineActionMenu({
       {showActions && (
         <div
           ref={dropdownRef}
-          className="absolute z-50 w-56 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden py-1"
+          className="fixed z-50 w-56 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden py-1"
           style={dropdownStyle}
           role="menu"
           aria-label="More actions menu"
