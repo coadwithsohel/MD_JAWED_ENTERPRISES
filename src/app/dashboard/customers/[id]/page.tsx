@@ -33,7 +33,17 @@ import {
   Building2,
   User,
   Activity,
+  CheckCircle,
+  UserX,
+  UserCheck,
+  Trash2,
 } from 'lucide-react';
+import CreditAccountSection from '@/components/customers/CreditAccountSection';
+import ChangeCreditLimitDialog from '@/components/customers/ChangeCreditLimitDialog';
+import DeactivateDialog from '@/components/customers/DeactivateDialog';
+import RestoreDialog from '@/components/customers/RestoreDialog';
+import PermanentDeleteDialog from '@/components/customers/PermanentDeleteDialog';
+import { toPaise, fromPaise } from '@/lib/money';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -84,7 +94,11 @@ interface CustomerInfo {
   state?: string;
   pinCode?: string;
   creditLimit: string;
+  currentBalance?: string;
   isActive: boolean;
+  creditLimitUpdatedAt?: string | null;
+  creditLimitUpdatedBy?: string | null;
+  deletedAt?: string | null;
 }
 
 interface LedgerResponse {
@@ -427,6 +441,158 @@ function MobileTransactionCard({ entry, onNavigate }: { entry: LedgerEntry; onNa
   );
 }
 
+// ─── Inline Action Menu (collision-aware) ─────────────────────────────────────
+
+function InlineActionMenu({
+  showActions,
+  setShowActions,
+  actionsRef,
+  handlePrint,
+  userInfo,
+  setDialog,
+  cust,
+}: {
+  showActions: boolean;
+  setShowActions: React.Dispatch<React.SetStateAction<boolean>>;
+  actionsRef: React.RefObject<HTMLDivElement | null>;
+  handlePrint: () => void;
+  userInfo: { role: string } | null;
+  setDialog: (d: 'credit' | 'deactivate' | 'restore' | 'permDelete' | null) => void;
+  cust: CustomerInfo;
+}) {
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+
+  useEffect(() => {
+    if (showActions && dropdownRef.current && actionsRef.current) {
+      const triggerRect = actionsRef.current.getBoundingClientRect();
+      const dropdownRect = dropdownRef.current.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const style: React.CSSProperties = {};
+
+      // Horizontal
+      const rightSpace = vw - triggerRect.right;
+      const leftSpace = triggerRect.left;
+      if (rightSpace >= dropdownRect.width || rightSpace >= leftSpace) {
+        style.right = 0;
+        style.left = 'auto';
+      } else {
+        style.left = 0;
+        style.right = 'auto';
+      }
+
+      // Vertical
+      const bottomSpace = vh - triggerRect.bottom;
+      const topSpace = triggerRect.top;
+      if (bottomSpace >= dropdownRect.height || bottomSpace >= topSpace) {
+        style.top = '100%';
+        style.bottom = 'auto';
+        style.marginTop = '4px';
+      } else {
+        style.bottom = '100%';
+        style.top = 'auto';
+        style.marginBottom = '4px';
+      }
+
+      setDropdownStyle(style);
+    }
+  }, [showActions, actionsRef]);
+
+  return (
+    <div className="relative inline-flex shrink-0" ref={actionsRef}>
+      <button
+        onClick={() => setShowActions((v) => !v)}
+        className="h-9 w-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:border-slate-300 hover:bg-slate-50 transition-all focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+        aria-label="More actions"
+        aria-haspopup="true"
+        aria-expanded={showActions}
+      >
+        <MoreVertical className="h-4 w-4" aria-hidden="true" />
+      </button>
+      {showActions && (
+        <div
+          ref={dropdownRef}
+          className="absolute z-50 w-56 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden py-1"
+          style={dropdownStyle}
+          role="menu"
+          aria-label="More actions menu"
+        >
+          <button
+            onClick={() => { handlePrint(); setShowActions(false); }}
+            className="w-full flex items-center gap-2.5 px-4 py-3 sm:py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 focus-visible:outline-none"
+            role="menuitem"
+          >
+            <Printer className="h-4 w-4 text-slate-400 shrink-0" aria-hidden="true" />
+            Print Ledger
+          </button>
+          <button
+            onClick={() => { handlePrint(); setShowActions(false); }}
+            className="w-full flex items-center gap-2.5 px-4 py-3 sm:py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 focus-visible:outline-none"
+            role="menuitem"
+          >
+            <Download className="h-4 w-4 text-slate-400 shrink-0" aria-hidden="true" />
+            Download PDF
+          </button>
+          <button
+            onClick={() => { setShowActions(false); }}
+            className="w-full flex items-center gap-2.5 px-4 py-3 sm:py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 focus-visible:outline-none"
+            role="menuitem"
+          >
+            <Share2 className="h-4 w-4 text-slate-400 shrink-0" aria-hidden="true" />
+            Share Statement
+          </button>
+          {(userInfo?.role === 'OWNER' || userInfo?.role === 'MANAGER') && (
+            <>
+              <div className="my-1 border-t border-slate-100" role="separator" />
+              <button
+                onClick={() => { setDialog('credit'); setShowActions(false); }}
+                className="w-full flex items-center gap-2.5 px-4 py-3 sm:py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 focus-visible:outline-none"
+                role="menuitem"
+              >
+                <CreditCard className="h-4 w-4 text-emerald-500 shrink-0" aria-hidden="true" />
+                Change Credit Limit
+              </button>
+              {cust.isActive ? (
+                <button
+                  onClick={() => { setDialog('deactivate'); setShowActions(false); }}
+                  className="w-full flex items-center gap-2.5 px-4 py-3 sm:py-2.5 text-sm text-amber-700 hover:bg-amber-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 focus-visible:outline-none"
+                  role="menuitem"
+                >
+                  <UserX className="h-4 w-4 text-amber-500 shrink-0" aria-hidden="true" />
+                  Deactivate Customer
+                </button>
+              ) : (
+                <button
+                  onClick={() => { setDialog('restore'); setShowActions(false); }}
+                  className="w-full flex items-center gap-2.5 px-4 py-3 sm:py-2.5 text-sm text-emerald-700 hover:bg-emerald-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 focus-visible:outline-none"
+                  role="menuitem"
+                >
+                  <UserCheck className="h-4 w-4 text-emerald-500 shrink-0" aria-hidden="true" />
+                  Reactivate Customer
+                </button>
+              )}
+            </>
+          )}
+          {userInfo?.role === 'OWNER' && !cust.isActive && (
+            <>
+              <div className="my-1 border-t border-slate-100" role="separator" />
+              <button
+                onClick={() => { setDialog('permDelete'); setShowActions(false); }}
+                className="w-full flex items-center gap-2.5 px-4 py-3 sm:py-2.5 text-sm text-rose-700 hover:bg-rose-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-rose-500 focus-visible:outline-none"
+                role="menuitem"
+              >
+                <Trash2 className="h-4 w-4 text-rose-400 shrink-0" aria-hidden="true" />
+                Delete Permanently
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function CustomerLedgerPage() {
@@ -448,6 +614,30 @@ export default function CustomerLedgerPage() {
   // Action menu
   const [showActions, setShowActions] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
+
+  // Dialog state
+  const [dialog, setDialog] = useState<'credit' | 'deactivate' | 'restore' | 'permDelete' | null>(null);
+
+  // User info for role-based visibility
+  const [userInfo, setUserInfo] = useState<{ role: string } | null>(null);
+
+  // Toasts
+  const [toasts, setToasts] = useState<Array<{ id: number; message: string; type: 'success' | 'error' }>>([]);
+  const toastIdRef = useRef(0);
+
+  function showToast(message: string, type: 'success' | 'error' = 'success') {
+    const id = ++toastIdRef.current;
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
+  }
+
+  // Fetch user info for role
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((r) => r.json())
+      .then((d) => { if (d.user) setUserInfo({ role: d.user.role }); })
+      .catch(() => {});
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -523,15 +713,120 @@ export default function CustomerLedgerPage() {
 
   const addressParts = [customer?.address, customer?.city, customer?.state, customer?.pinCode].filter(Boolean);
   const fullAddress = addressParts.join(', ');
-
   // Narrowed references used inside the {data && (...)} block
   const cust = data?.customer as CustomerInfo;
   const summ = data?.summary as LedgerSummary;
   const pag = data?.pagination as LedgerResponse['pagination'];
   const custAddress = [cust?.address, cust?.city, cust?.state, cust?.pinCode].filter(Boolean).join(', ');
 
+  // ─── Toasts ───────────────────────────────────────────────────────────────
+  const toastList = toasts;
+
   return (
     <>
+      {/* Toast notifications */}
+      <div className="fixed bottom-4 right-4 z-[100] space-y-2 w-full max-w-sm">
+        {toastList.map((t) => (
+          <div
+            key={t.id}
+            className={`flex items-start gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium border transition-all ${
+              t.type === 'success'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-rose-50 border-rose-200 text-rose-800'
+            }`}
+            role="status"
+            aria-live="polite"
+          >
+            {t.type === 'success'
+              ? <CheckCircle className="h-4 w-4 shrink-0 mt-0.5 text-emerald-500" />
+              : <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-500" />
+            }
+            <span className="flex-1">{t.message}</span>
+            <button
+              onClick={() => setToasts((p) => p.filter((x) => x.id !== t.id))}
+              className="shrink-0 opacity-60 hover:opacity-100 transition-opacity"
+              aria-label="Dismiss notification"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* ─── Dialogs ──────────────────────────────────────────────────────── */}
+      {dialog === 'credit' && cust && (
+        <ChangeCreditLimitDialog
+          customerId={cust.id}
+          customerName={cust.fullName}
+          customerCode={cust.customerCode}
+          currentCreditLimit={cust.creditLimit ?? '0'}
+          currentOutstanding={summ?.closingBalance ?? '0'}
+          currentOutstandingRaw={Math.max(0, toPaise(cust.currentBalance ?? summ?.closingBalance?.replace(/[₹,\s]/g, '') ?? '0'))}
+          onSuccess={(newLimit) => {
+            setDialog(null);
+            showToast('Credit limit updated successfully.');
+            fetchLedger();
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+
+      {dialog === 'deactivate' && cust && (
+        <DeactivateDialog
+          customerId={cust.id}
+          customerName={cust.fullName}
+          customerCode={cust.customerCode}
+          mobile={cust.mobile}
+          stats={{
+            invoiceCount: 0,
+            paymentCount: 0,
+            outstandingPaise: toPaise(cust.currentBalance ?? '0'),
+          }}
+          onSuccess={() => {
+            setDialog(null);
+            showToast('Customer deactivated. Financial history has been preserved.');
+            fetchLedger();
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+
+      {dialog === 'restore' && cust && (
+        <RestoreDialog
+          customerId={cust.id}
+          customerName={cust.fullName}
+          customerCode={cust.customerCode}
+          onSuccess={() => {
+            setDialog(null);
+            showToast('Customer restored successfully.');
+            fetchLedger();
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+
+      {dialog === 'permDelete' && cust && (
+        <PermanentDeleteDialog
+          customerId={cust.id}
+          customerName={cust.fullName}
+          customerCode={cust.customerCode}
+          safetyCounts={{
+            invoiceCount: 0,
+            paymentCount: 0,
+            ledgerCount: 0,
+            reminderCount: 0,
+            hasOutstanding: toPaise(cust.currentBalance ?? '0') !== 0,
+            outstandingLabel: fromPaise(Math.abs(toPaise(cust.currentBalance ?? '0'))),
+          }}
+          onSuccess={() => {
+            setDialog(null);
+            showToast('Customer permanently deleted.');
+            router.push('/dashboard/customers');
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+
       {/* ─── Print styles (injected in head via style tag) ─────────────────── */}
       <style>{`
         @media print {
@@ -697,61 +992,53 @@ export default function CustomerLedgerPage() {
 
                     {/* Primary actions */}
                     <div className="ledger-no-print flex items-center gap-2 flex-wrap">
-                      <Link
-                        href={`/dashboard/sales?customerId=${cust.id}`}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm min-h-[36px]"
-                      >
-                        <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span className="hidden sm:inline">Create </span>Invoice
-                      </Link>
-                      <Link
-                        href={`/dashboard/credit?customerId=${cust.id}`}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm min-h-[36px]"
-                      >
-                        <CreditCard className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span className="hidden sm:inline">Record </span>Payment
-                      </Link>
+                      {cust.isActive ? (
+                        <>
+                          <Link
+                            href={`/dashboard/sales?customerId=${cust.id}`}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm min-h-[36px]"
+                          >
+                            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span className="hidden sm:inline">Create </span>Invoice
+                          </Link>
+                          <Link
+                            href={`/dashboard/credit?customerId=${cust.id}`}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm min-h-[36px]"
+                          >
+                            <CreditCard className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span className="hidden sm:inline">Record </span>Payment
+                          </Link>
+                        </>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-amber-100 text-amber-700 border border-amber-200 min-h-[36px]">
+                          <UserX className="h-3.5 w-3.5" aria-hidden="true" />
+                          Customer Inactive
+                        </span>
+                      )}
 
                       {/* More actions */}
-                      <div className="relative" ref={actionsRef}>
-                        <button
-                          onClick={() => setShowActions((v) => !v)}
-                          className="h-9 w-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:border-slate-300 hover:bg-slate-50 transition-all"
-                          aria-label="More actions"
-                          aria-haspopup="true"
-                          aria-expanded={showActions}
-                        >
-                          <MoreVertical className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                        {showActions && (
-                          <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-lg z-20 overflow-hidden py-1">
-                            <button
-                              onClick={() => { handlePrint(); setShowActions(false); }}
-                              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors text-left"
-                            >
-                              <Printer className="h-4 w-4 text-slate-400" aria-hidden="true" />
-                              Print Ledger
-                            </button>
-                            <button
-                              onClick={() => { handlePrint(); setShowActions(false); }}
-                              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors text-left"
-                            >
-                              <Download className="h-4 w-4 text-slate-400" aria-hidden="true" />
-                              Download PDF
-                            </button>
-                            <button
-                              onClick={() => { setShowActions(false); }}
-                              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors text-left"
-                            >
-                              <Share2 className="h-4 w-4 text-slate-400" aria-hidden="true" />
-                              Share Statement
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                      <InlineActionMenu
+                        showActions={showActions}
+                        setShowActions={setShowActions}
+                        actionsRef={actionsRef}
+                        handlePrint={handlePrint}
+                        userInfo={userInfo}
+                        setDialog={setDialog}
+                        cust={cust}
+                      />
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* ─── Credit Account Section ──────────────────────────────────── */}
+              <div className="p-4">
+                <CreditAccountSection
+                  creditLimitRaw={cust.creditLimit ?? '0'}
+                  currentBalanceRaw={cust.currentBalance ?? summ.closingBalance.replace(/[₹,\s]/g, '') ?? '0'}
+                  creditLimitUpdatedAt={cust.creditLimitUpdatedAt}
+                  creditLimitUpdatedBy={cust.creditLimitUpdatedBy}
+                />
               </div>
 
               {/* ─── Summary cards ──────────────────────────────────────── */}

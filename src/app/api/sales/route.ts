@@ -20,6 +20,9 @@ const CreateSaleSchema = z.object({
   items: z.array(SaleItemInput).min(1, "At least one item is required"),
   notes: z.string().optional().nullable(),
   discountAmount: z.number().min(0).default(0),
+  // Credit limit override — OWNER only
+  overrideCreditLimit: z.boolean().optional().default(false),
+  overrideReason: z.string().max(500).optional().nullable(),
 });
 
 export async function GET(req: NextRequest) {
@@ -101,6 +104,20 @@ export async function POST(req: NextRequest) {
       paidAmount: clientPaidAmount,
     } = parsed.data;
 
+    // Validate inactive customer
+    if (customerId) {
+      const customerCheck = await prisma.customer.findUnique({
+        where: { id: customerId },
+        select: { isActive: true, fullName: true },
+      });
+      if (customerCheck && !customerCheck.isActive) {
+        return NextResponse.json(
+          { error: `Customer ${customerCheck.fullName} is inactive. Reactivate the customer before creating a new invoice.` },
+          { status: 409 },
+        );
+      }
+    }
+
     const now = getISTNow();
     const invoiceNumber = await generateInvoiceNumber();
 
@@ -178,12 +195,64 @@ export async function POST(req: NextRequest) {
       pendingAmount = grandTotal.sub(paidAmount);
     }
 
-    if (customer && pendingAmount.gt(0)) {
+    if (customer && pendingAmount.gt(0) && customer.creditLimit.gt(0)) {
       const newBalance = customer.currentBalance.add(pendingAmount);
-      if (customer.creditLimit.gt(0) && newBalance.gt(customer.creditLimit)) {
-        throw new Error(
-          `Credit limit exceeded. Limit: ₹${customer.creditLimit}, Current balance: ₹${customer.currentBalance}, New charge: ₹${pendingAmount}`,
-        );
+      if (newBalance.gt(customer.creditLimit)) {
+        const overrideCreditLimit = parsed.data.overrideCreditLimit ?? false;
+        const overrideReason = parsed.data.overrideReason ?? null;
+        const isOwner = auth.role === 'OWNER';
+
+        if (!overrideCreditLimit || !isOwner) {
+          // Return structured 409 so the UI can show a detailed error
+          const availablePaise = Math.max(0, Math.round((customer.creditLimit.sub(customer.currentBalance)).toNumber() * 100));
+          const exceededPaise = Math.round(newBalance.sub(customer.creditLimit).toNumber() * 100);
+          const formatRs = (paise: number) =>
+            new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(Math.abs(paise) / 100);
+          return NextResponse.json(
+            {
+              error: 'Credit limit exceeded',
+              creditLimitExceeded: true,
+              details: {
+                currentOutstanding: formatRs(Math.round(customer.currentBalance.toNumber() * 100)),
+                creditLimit: formatRs(Math.round(customer.creditLimit.toNumber() * 100)),
+                availableCredit: formatRs(availablePaise),
+                invoiceCreditAmount: formatRs(Math.round(pendingAmount.toNumber() * 100)),
+                exceededBy: formatRs(exceededPaise),
+                canOverride: isOwner,
+              },
+            },
+            { status: 409 },
+          );
+        }
+
+        // OWNER override path — record in audit
+        if (!overrideReason) {
+          return NextResponse.json(
+            { error: 'A reason is required to override the credit limit' },
+            { status: 400 },
+          );
+        }
+
+        // Audit the override (fire-and-forget, non-blocking)
+        void prisma.auditLog
+          .create({
+            data: {
+              userId: auth.userId,
+              action: 'CREDIT_LIMIT_OVERRIDE',
+              entityType: 'Customer',
+              entityId: customer.id,
+              oldData: {
+                currentBalance: customer.currentBalance.toString(),
+                creditLimit: customer.creditLimit.toString(),
+              },
+              newData: {
+                pendingAmount: pendingAmount.toString(),
+                projectedBalance: newBalance.toString(),
+                overrideReason,
+              },
+            },
+          })
+          .catch((e) => console.error('[CREDIT_LIMIT_OVERRIDE audit]', e));
       }
     }
 

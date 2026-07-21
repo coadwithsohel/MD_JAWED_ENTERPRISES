@@ -196,14 +196,21 @@ model Customer {
   creditLimit      Decimal        @default(0) @db.Decimal(14, 2)
   openingBalance   Decimal        @default(0) @db.Decimal(14, 2)
   currentBalance   Decimal        @default(0) @db.Decimal(14, 2)
-  isActive         Boolean        @default(true)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-  sales            Sale[]
-  payments         Payment[]
-  ledgers          CreditLedger[]
-  reminders        Reminder[]
-  importRows       CustomerImportRow[]
+  isActive              Boolean        @default(true)
+  // ─── Soft-delete fields ───────────────────────────────────────────────────
+  deletedAt             DateTime?
+  deletedBy             String?        // userId of who deactivated/deleted
+  deleteReason          String?
+  // ─── Credit-limit audit fields ────────────────────────────────────────────
+  creditLimitUpdatedAt  DateTime?
+  creditLimitUpdatedBy  String?        // userId of who last changed credit limit
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  sales                 Sale[]
+  payments              Payment[]
+  ledgers               CreditLedger[]
+  reminders             Reminder[]
+  importRows            CustomerImportRow[]
 
   @@index([fullName])
   @@index([mobile])
@@ -211,6 +218,7 @@ model Customer {
   @@index([customerCode])
   @@index([city])
   @@index([isActive])
+  @@index([deletedAt])
 }
 
 model Category {
