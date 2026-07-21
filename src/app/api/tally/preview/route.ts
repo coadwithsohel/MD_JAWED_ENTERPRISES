@@ -1,29 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { requireAuth } from '@/lib/auth';
-
-/**
- * POST /api/tally/preview
- *
- * Accepts a JSON array of Tally vouchers for preview/validation.
- * Does NOT import anything — purely informational.
- *
- * Body: { vouchers: Array<{
- *   tallyGuid?: string
- *   tallyRemoteId?: string
- *   tallyMasterId?: string
- *   voucherKey?: string
- *   customerName: string
- *   voucherDate: string  (ISO date)
- *   voucherType: 'SALES' | 'RECEIPT' | 'DEBIT_NOTE' | 'CREDIT_NOTE' | 'OPENING_BALANCE'
- *   voucherNumber?: string
- *   debit?: number
- *   credit?: number
- *   narration?: string
- *   reference?: string
- *   sourceFileName?: string
- * }> }
- */
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
 
 interface TallyVoucherInput {
   tallyGuid?: string;
@@ -31,8 +8,14 @@ interface TallyVoucherInput {
   tallyMasterId?: string;
   voucherKey?: string;
   customerName: string;
+  mobile?: string;
   voucherDate: string;
-  voucherType: 'SALES' | 'RECEIPT' | 'DEBIT_NOTE' | 'CREDIT_NOTE' | 'OPENING_BALANCE';
+  voucherType:
+    | "SALES"
+    | "RECEIPT"
+    | "DEBIT_NOTE"
+    | "CREDIT_NOTE"
+    | "OPENING_BALANCE";
   voucherNumber?: string;
   debit?: number;
   credit?: number;
@@ -46,156 +29,334 @@ export async function POST(req: NextRequest) {
   if (error) return error;
 
   try {
-    const body = await req.json();
-    const vouchers: TallyVoucherInput[] = body.vouchers;
+    const body = await req.json().catch(() => ({}));
+    const batchId = (body.batchId ||
+      req.nextUrl.searchParams.get("batchId") ||
+      "") as string;
+    let vouchers: TallyVoucherInput[] = Array.isArray(body.vouchers)
+      ? body.vouchers
+      : [];
 
-    if (!Array.isArray(vouchers) || vouchers.length === 0) {
-      return NextResponse.json({ error: 'vouchers array is required and must not be empty' }, { status: 400 });
+    if (!vouchers.length && batchId) {
+      const persistedVouchers = await prisma.tallyVoucher.findMany({
+        where: { importBatchId: batchId },
+        select: {
+          customerName: true,
+          voucherDate: true,
+          voucherType: true,
+          voucherNumber: true,
+          debit: true,
+          credit: true,
+          narration: true,
+          reference: true,
+          tallyGuid: true,
+          tallyRemoteId: true,
+          tallyMasterId: true,
+          voucherKey: true,
+        },
+        orderBy: [{ createdAt: "asc" }],
+      });
+
+      vouchers = persistedVouchers.map((voucher) => ({
+        customerName: voucher.customerName || "",
+        voucherDate: voucher.voucherDate.toISOString().slice(0, 10),
+        voucherType: voucher.voucherType as TallyVoucherInput["voucherType"],
+        voucherNumber: voucher.voucherNumber || undefined,
+        debit: Number(voucher.debit) || 0,
+        credit: Number(voucher.credit) || 0,
+        narration: voucher.narration || undefined,
+        reference: voucher.reference || undefined,
+        tallyGuid: voucher.tallyGuid || undefined,
+        tallyRemoteId: voucher.tallyRemoteId || undefined,
+        tallyMasterId: voucher.tallyMasterId || undefined,
+        voucherKey: voucher.voucherKey || undefined,
+      }));
     }
 
-    // Find all customers (for matching)
+    if (!Array.isArray(vouchers) || vouchers.length === 0) {
+      return NextResponse.json(
+        { error: "vouchers array is required and must not be empty" },
+        { status: 400 },
+      );
+    }
+
     const allCustomers = await prisma.customer.findMany({
       select: { id: true, fullName: true, customerCode: true, mobile: true },
     });
 
-    // Normalize customer names for fuzzy matching
     function normalizeName(name: string): string {
-      return name.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+      return name
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "")
+        .trim();
     }
 
-    const nameIndex = new Map<string, typeof allCustomers[number]>();
-    for (const c of allCustomers) {
-      const key = normalizeName(c.fullName);
+    function normalizeMobile(value: string): string {
+      return value.replace(/\D/g, "").trim();
+    }
+
+    const nameIndex = new Map<string, (typeof allCustomers)[number]>();
+    const mobileIndex = new Map<string, (typeof allCustomers)[number]>();
+    for (const customer of allCustomers) {
+      const key = normalizeName(customer.fullName);
       if (!nameIndex.has(key)) {
-        nameIndex.set(key, c);
+        nameIndex.set(key, customer);
+      }
+      if (customer.mobile) {
+        const mobileKey = normalizeMobile(customer.mobile);
+        if (!mobileIndex.has(mobileKey)) {
+          mobileIndex.set(mobileKey, customer);
+        }
       }
     }
 
-    // Check for existing tally GUIDs
+    const existingVoucherKeys = new Set<string>();
     const existingGuids = new Set<string>();
-    if (vouchers.some(v => v.tallyGuid)) {
-      const guids = vouchers.map(v => v.tallyGuid).filter(Boolean) as string[];
+    const sourceKeys = vouchers
+      .map((voucher) => voucher.voucherKey || voucher.tallyGuid)
+      .filter((value): value is string => Boolean(value));
+    if (sourceKeys.length > 0) {
       const existing = await prisma.tallyVoucher.findMany({
-        where: { tallyGuid: { in: guids } },
-        select: { tallyGuid: true },
+        where: {
+          OR: [
+            { voucherKey: { in: sourceKeys } },
+            {
+              tallyGuid: { in: sourceKeys.filter((value) => value.length > 0) },
+            },
+          ],
+        },
+        select: { voucherKey: true, tallyGuid: true },
       });
-      for (const e of existing) {
-        if (e.tallyGuid) existingGuids.add(e.tallyGuid);
+      for (const entry of existing) {
+        if (entry.voucherKey) existingVoucherKeys.add(entry.voucherKey);
+        if (entry.tallyGuid) existingGuids.add(entry.tallyGuid);
       }
     }
 
-    // Process each voucher
-    const matchedCustomers: Set<string> = new Set();
-    const unmatchedCustomers: Set<string> = new Set();
-    const salesVouchers: Array<{ customerName: string; amount: number; voucherNumber?: string }> = [];
-    const receiptVouchers: Array<{ customerName: string; amount: number; voucherNumber?: string }> = [];
+    const matchedCustomersMap = new Map<
+      string,
+      {
+        customerId: string;
+        customerName: string;
+        customerCode: string;
+        vouchers: number;
+      }
+    >();
+    const unmatchedCustomerNames: string[] = [];
+    const duplicateVouchers: Array<{
+      customerName: string;
+      voucherNumber?: string;
+      voucherDate: string;
+    }> = [];
+    const salesVouchers: Array<{
+      customerName: string;
+      amount: number;
+      voucherNumber?: string;
+    }> = [];
+    const receiptVouchers: Array<{
+      customerName: string;
+      amount: number;
+      voucherNumber?: string;
+    }> = [];
+    const customerClosings = new Map<
+      string,
+      { opening: number; debit: number; credit: number }
+    >();
     let totalDebit = 0;
     let totalCredit = 0;
     let duplicateCount = 0;
     let invalidRows = 0;
-    const customerClosings = new Map<string, { opening: number; debit: number; credit: number }>();
+    const seenVoucherKeys = new Set<string>();
 
-    for (const v of vouchers) {
-      // Validate
-      if (!v.customerName || !v.voucherDate || !v.voucherType) {
+    for (const voucher of vouchers) {
+      if (
+        !voucher.customerName ||
+        !voucher.voucherDate ||
+        !voucher.voucherType
+      ) {
         invalidRows++;
         continue;
       }
 
-      const d = new Date(v.voucherDate);
-      if (isNaN(d.getTime())) {
+      const parsedDate = new Date(voucher.voucherDate);
+      if (Number.isNaN(parsedDate.getTime())) {
         invalidRows++;
         continue;
       }
 
-      const amt = (v.debit || 0) - (v.credit || 0);
-
-      // Check duplicate
-      if (v.tallyGuid && existingGuids.has(v.tallyGuid)) {
+      const sourceKey = voucher.voucherKey || voucher.tallyGuid;
+      if (
+        sourceKey &&
+        (existingVoucherKeys.has(sourceKey) || existingGuids.has(sourceKey))
+      ) {
         duplicateCount++;
+        duplicateVouchers.push({
+          customerName: voucher.customerName,
+          voucherNumber: voucher.voucherNumber,
+          voucherDate: voucher.voucherDate,
+        });
         continue;
       }
+      if (sourceKey && seenVoucherKeys.has(sourceKey)) {
+        duplicateCount++;
+        duplicateVouchers.push({
+          customerName: voucher.customerName,
+          voucherNumber: voucher.voucherNumber,
+          voucherDate: voucher.voucherDate,
+        });
+        continue;
+      }
+      if (sourceKey) {
+        seenVoucherKeys.add(sourceKey);
+      }
 
-      // Match customer
-      const normalizedInput = normalizeName(v.customerName);
-      let matchedCustomer = nameIndex.get(normalizedInput);
+      let matchedCustomer = undefined as
+        | (typeof allCustomers)[number]
+        | undefined;
+      if (voucher.mobile) {
+        matchedCustomer = mobileIndex.get(normalizeMobile(voucher.mobile));
+      }
 
-      // Try partial match if exact fails
+      const normalizedInput = normalizeName(voucher.customerName);
       if (!matchedCustomer) {
-        for (const [key, cust] of nameIndex) {
+        matchedCustomer = nameIndex.get(normalizedInput);
+      }
+
+      if (!matchedCustomer) {
+        for (const [key, customer] of nameIndex) {
           if (key.includes(normalizedInput) || normalizedInput.includes(key)) {
-            matchedCustomer = cust;
+            matchedCustomer = customer;
             break;
           }
         }
       }
 
       if (matchedCustomer) {
-        matchedCustomers.add(matchedCustomer.fullName);
+        const existing = matchedCustomersMap.get(matchedCustomer.id);
+        if (existing) {
+          existing.vouchers += 1;
+        } else {
+          matchedCustomersMap.set(matchedCustomer.id, {
+            customerId: matchedCustomer.id,
+            customerName: matchedCustomer.fullName,
+            customerCode: matchedCustomer.customerCode,
+            vouchers: 1,
+          });
+        }
 
         if (!customerClosings.has(matchedCustomer.id)) {
           const dbCustomer = await prisma.customer.findUnique({
             where: { id: matchedCustomer.id },
             select: { openingBalance: true },
           });
-          const opening = dbCustomer ? Number(dbCustomer.openingBalance) : 0;
-          customerClosings.set(matchedCustomer.id, { opening, debit: 0, credit: 0 });
+          customerClosings.set(matchedCustomer.id, {
+            opening: dbCustomer ? Number(dbCustomer.openingBalance) : 0,
+            debit: 0,
+            credit: 0,
+          });
         }
 
-        const cl = customerClosings.get(matchedCustomer.id)!;
-
-        if (v.voucherType === 'SALES' || v.voucherType === 'DEBIT_NOTE') {
-          cl.debit += v.debit || 0;
-          totalDebit += v.debit || 0;
-          if (v.voucherType === 'SALES') {
-            salesVouchers.push({ customerName: v.customerName, amount: v.debit || 0, voucherNumber: v.voucherNumber });
+        const closing = customerClosings.get(matchedCustomer.id)!;
+        if (
+          voucher.voucherType === "SALES" ||
+          voucher.voucherType === "DEBIT_NOTE"
+        ) {
+          closing.debit += voucher.debit || 0;
+          totalDebit += voucher.debit || 0;
+          if (voucher.voucherType === "SALES") {
+            salesVouchers.push({
+              customerName: voucher.customerName,
+              amount: voucher.debit || 0,
+              voucherNumber: voucher.voucherNumber,
+            });
           }
-        } else if (v.voucherType === 'RECEIPT' || v.voucherType === 'CREDIT_NOTE') {
-          cl.credit += v.credit || 0;
-          totalCredit += v.credit || 0;
-          if (v.voucherType === 'RECEIPT') {
-            receiptVouchers.push({ customerName: v.customerName, amount: v.credit || 0, voucherNumber: v.voucherNumber });
+        } else if (
+          voucher.voucherType === "RECEIPT" ||
+          voucher.voucherType === "CREDIT_NOTE"
+        ) {
+          closing.credit += voucher.credit || 0;
+          totalCredit += voucher.credit || 0;
+          if (voucher.voucherType === "RECEIPT") {
+            receiptVouchers.push({
+              customerName: voucher.customerName,
+              amount: voucher.credit || 0,
+              voucherNumber: voucher.voucherNumber,
+            });
           }
         }
       } else {
-        unmatchedCustomers.add(v.customerName);
+        unmatchedCustomerNames.push(voucher.customerName);
       }
     }
 
-    // Build expected closing report
-    const expectedClosings = Array.from(customerClosings.entries()).map(([customerId, data]) => {
-      const customer = allCustomers.find(c => c.id === customerId);
-      return {
-        customer: customer?.fullName || customerId,
-        openingBalance: data.opening,
-        debitTotal: data.debit,
-        creditTotal: data.credit,
-        expectedClosing: data.opening + data.debit - data.credit,
-      };
+    const matchedCustomers = Array.from(matchedCustomersMap.values()).sort(
+      (a, b) => a.customerName.localeCompare(b.customerName),
+    );
+    const customerClosingsList = Array.from(customerClosings.entries()).map(
+      ([customerId, data]) => {
+        const customer = allCustomers.find((entry) => entry.id === customerId);
+        return {
+          customerId,
+          customerName: customer?.fullName || customerId,
+          openingBalance: data.opening,
+          totalDebit: data.debit,
+          totalCredit: data.credit,
+          expectedClosing: data.opening + data.debit - data.credit,
+        };
+      },
+    );
+
+    console.info("[tally/preview] previewed", {
+      batchId,
+      totalVouchers: vouchers.length,
+      matchedCustomers: matchedCustomers.length,
+      invalidRows,
     });
 
     return NextResponse.json({
+      ok: true,
+      batchId,
+      totalVouchers: vouchers.length,
+      sales: salesVouchers.length,
+      receipts: receiptVouchers.length,
+      debitNotes: 0,
+      creditNotes: 0,
+      matchedCustomers,
+      unmatchedCustomerNames: [...new Set(unmatchedCustomerNames)].sort(),
+      duplicateCount,
+      invalidCount: invalidRows,
+      duplicateVouchers: duplicateVouchers.slice(0, 50),
+      customerClosings: customerClosingsList.sort((a, b) =>
+        a.customerName.localeCompare(b.customerName),
+      ),
+      sampleVouchers: vouchers.slice(0, 20),
       summary: {
         totalVouchers: vouchers.length,
-        matchedCustomers: matchedCustomers.size,
-        unmatchedCustomers: unmatchedCustomers.size,
-        salesVouchers: salesVouchers.length,
-        receiptVouchers: receiptVouchers.length,
+        sales: salesVouchers.length,
+        receipts: receiptVouchers.length,
+        debitNotes: 0,
+        creditNotes: 0,
+        matchedCustomers: matchedCustomers.length,
+        unmatchedCustomers: [...new Set(unmatchedCustomerNames)].length,
         debitTotal: totalDebit,
         creditTotal: totalCredit,
         duplicateVouchers: duplicateCount,
         invalidRows,
       },
-      matchedCustomerList: Array.from(matchedCustomers),
-      unmatchedCustomerList: Array.from(unmatchedCustomers),
-      salesVoucherList: salesVouchers.slice(0, 100), // preview max 100
-      receiptVoucherList: receiptVouchers.slice(0, 100),
-      expectedClosings,
       warnings: invalidRows > 0 ? [`${invalidRows} invalid rows found`] : [],
-      ok: duplicateCount === 0 && invalidRows === 0,
     });
   } catch (err) {
-    console.error('[POST /api/tally/preview]', err);
-    return NextResponse.json({ error: 'Server error processing preview' }, { status: 500 });
+    console.error("Transaction import failed", {
+      stage: "preview",
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
+    return NextResponse.json(
+      {
+        error: "Server error processing preview",
+        details:
+          "The preview could not be generated from the uploaded transactions.",
+      },
+      { status: 500 },
+    );
   }
 }

@@ -29,6 +29,7 @@ export interface TallyVoucherInput {
   tallyMasterId?: string;
   voucherKey?: string;
   customerName: string;
+  mobile?: string;
   voucherDate: string; // ISO date string YYYY-MM-DD
   voucherType: TallyVoucherType;
   voucherNumber?: string;
@@ -424,6 +425,40 @@ function parseCsvRow(line: string): string[] {
   return cells;
 }
 
+function normalizeHeader(value: string): string {
+  return value
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function parseNumericValue(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.replace(/,/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function validateTransactionCsvHeaders(headers: string[]): {
+  isValid: boolean;
+  missing: string[];
+} {
+  const normalizedHeaders = headers.map(normalizeHeader);
+  const requiredGroups = [
+    ["customer name", "customername"],
+    ["date", "voucherdate", "transaction date", "transactiondate"],
+    ["voucher type", "vouchertype", "type"],
+    ["debit"],
+    ["credit"],
+  ];
+  const missing = requiredGroups
+    .filter((group) => !group.some((key) => normalizedHeaders.includes(key)))
+    .map((group) => group[0]);
+  return { isValid: missing.length === 0, missing };
+}
+
 export function parseTallyCsv(
   csvContent: string,
   sourceFileName: string = "tally-import.csv",
@@ -433,26 +468,38 @@ export function parseTallyCsv(
     .filter((line) => line.trim().length > 0);
   if (lines.length < 2) return [];
 
-  const headers = parseCsvRow(lines[0]).map((header) =>
-    header
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, ""),
-  );
+  const headers = parseCsvRow(lines[0]).map(normalizeHeader);
   const fieldMap: Record<string, string> = {
+    "customer name": "customerName",
     customername: "customerName",
-    partyname: "customerName",
-    partyledgername: "customerName",
-    voucherdate: "voucherDate",
+    mobile: "mobile",
     date: "voucherDate",
-    effectivedate: "voucherDate",
-    vouchernumber: "voucherNumber",
+    "voucher date": "voucherDate",
+    voucherdate: "voucherDate",
+    "effective date": "voucherDate",
+    "transaction date": "voucherDate",
+    transactiondate: "voucherDate",
+    "voucher number": "voucherNumber",
+    "voucher type": "voucherType",
     vouchertype: "voucherType",
     type: "voucherType",
+    particulars: "particulars",
     narration: "narration",
     reference: "reference",
     debit: "debit",
     credit: "credit",
+    "source entry key": "voucherKey",
+    sourceentrykey: "voucherKey",
+    "source guid": "tallyGuid",
+    sourceguid: "tallyGuid",
+    "source remote id": "tallyRemoteId",
+    sourceremoteid: "tallyRemoteId",
+    "source master id": "tallyMasterId",
+    sourcemasterid: "tallyMasterId",
+    "source vch key": "voucherKey",
+    sourcevchkey: "voucherKey",
+    sourcefile: "sourceFileName",
+    "source file": "sourceFileName",
   };
 
   const indexByKey = new Map<string, number>();
@@ -462,11 +509,14 @@ export function parseTallyCsv(
   });
 
   const vouchers: TallyVoucherInput[] = [];
+  const seenVoucherKeys = new Set<string>();
+
   for (const line of lines.slice(1)) {
     const cells = parseCsvRow(line);
     const customerName = (
       cells[indexByKey.get("customerName") ?? -1] || ""
     ).trim();
+    const mobile = (cells[indexByKey.get("mobile") ?? -1] || "").trim();
     const voucherDate = (
       cells[indexByKey.get("voucherDate") ?? -1] || ""
     ).trim();
@@ -476,29 +526,63 @@ export function parseTallyCsv(
     const voucherNumber = (
       cells[indexByKey.get("voucherNumber") ?? -1] || ""
     ).trim();
-    const narration = (cells[indexByKey.get("narration") ?? -1] || "").trim();
+    const narration = (
+      cells[indexByKey.get("narration") ?? -1] ||
+      cells[indexByKey.get("particulars") ?? -1] ||
+      ""
+    ).trim();
     const reference = (cells[indexByKey.get("reference") ?? -1] || "").trim();
-    const debit = Number(
-      (cells[indexByKey.get("debit") ?? -1] || "0").replace(/[^0-9.-]/g, ""),
+    const debitValue = parseNumericValue(
+      cells[indexByKey.get("debit") ?? -1] || "",
     );
-    const credit = Number(
-      (cells[indexByKey.get("credit") ?? -1] || "0").replace(/[^0-9.-]/g, ""),
+    const creditValue = parseNumericValue(
+      cells[indexByKey.get("credit") ?? -1] || "",
     );
+    const voucherKey = (cells[indexByKey.get("voucherKey") ?? -1] || "").trim();
+    const tallyGuid = (cells[indexByKey.get("tallyGuid") ?? -1] || "").trim();
+    const tallyRemoteId = (
+      cells[indexByKey.get("tallyRemoteId") ?? -1] || ""
+    ).trim();
+    const tallyMasterId = (
+      cells[indexByKey.get("tallyMasterId") ?? -1] || ""
+    ).trim();
 
     if (!customerName || !voucherDate) continue;
+
+    const normalizedDate = normalizeDate(voucherDate) || voucherDate;
+    if (!normalizedDate) continue;
+
+    const debit = debitValue ?? 0;
+    const credit = creditValue ?? 0;
+    const hasDebit = debit > 0;
+    const hasCredit = credit > 0;
+
+    if (!hasDebit && !hasCredit) continue;
+    if (hasDebit && hasCredit) continue;
 
     const normalizedType = classifyTypeFromText(voucherTypeRaw, debit, credit);
     if (!normalizedType) continue;
 
+    const sourceKey = voucherKey || tallyGuid;
+    if (sourceKey) {
+      if (seenVoucherKeys.has(sourceKey)) continue;
+      seenVoucherKeys.add(sourceKey);
+    }
+
     vouchers.push({
       customerName,
-      voucherDate: normalizeDate(voucherDate) || voucherDate,
+      mobile: mobile || undefined,
+      voucherDate: normalizedDate,
       voucherType: normalizedType,
       voucherNumber: voucherNumber || undefined,
-      debit: Number.isFinite(debit) ? Math.abs(debit) : 0,
-      credit: Number.isFinite(credit) ? Math.abs(credit) : 0,
+      debit,
+      credit,
       narration: narration || undefined,
       reference: reference || undefined,
+      voucherKey: voucherKey || undefined,
+      tallyGuid: tallyGuid || undefined,
+      tallyRemoteId: tallyRemoteId || undefined,
+      tallyMasterId: tallyMasterId || undefined,
       sourceFileName,
     });
   }
@@ -558,21 +642,24 @@ export function validateVouchers(vouchers: TallyVoucherInput[]): {
   const invalid: TallyVoucherInput[] = [];
 
   for (const v of vouchers) {
-    // Validate required fields
     if (!v.customerName || !v.voucherDate || !v.voucherType) {
       invalid.push(v);
       continue;
     }
 
-    // Validate date
     const d = new Date(v.voucherDate);
     if (isNaN(d.getTime())) {
       invalid.push(v);
       continue;
     }
 
-    // Validate amount
-    if (v.debit <= 0 && v.credit <= 0) {
+    const hasDebit = Number(v.debit) > 0;
+    const hasCredit = Number(v.credit) > 0;
+    if (!hasDebit && !hasCredit) {
+      invalid.push(v);
+      continue;
+    }
+    if (hasDebit && hasCredit) {
       invalid.push(v);
       continue;
     }

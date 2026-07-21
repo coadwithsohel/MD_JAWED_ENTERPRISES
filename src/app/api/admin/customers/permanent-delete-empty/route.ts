@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth";
-import { toPaise } from "@/lib/money";
+import { getCustomerDeletionEligibility } from "@/lib/customer-delete-safety";
 
 const schema = z
   .object({
@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
             sales: true,
             payments: true,
             ledgers: true,
+            ledgerTransactions: true,
             reminders: true,
             importRows: true,
             tallyVouchers: true,
@@ -65,36 +66,39 @@ export async function POST(req: NextRequest) {
       invoices: 0,
       payments: 0,
       ledgerEntries: 0,
+      ledgerTransactions: 0,
       nonZeroBalance: 0,
       otherReferences: 0,
     };
+    const blockedDetails: Array<{
+      customerId: string;
+      customerCode: string;
+      reasons: string[];
+    }> = [];
 
     for (const customer of customers) {
-      const issues: string[] = [];
-      if (customer._count.sales > 0) issues.push("invoices");
-      if (customer._count.payments > 0) issues.push("payments");
-      if (customer._count.ledgers > 0) issues.push("ledgerEntries");
-      if (
-        customer._count.reminders > 0 ||
-        customer._count.importRows > 0 ||
-        customer._count.tallyVouchers > 0
-      )
-        issues.push("otherReferences");
-      if (
-        toPaise(customer.openingBalance) !== 0 ||
-        toPaise(customer.currentBalance) !== 0
-      )
-        issues.push("nonZeroBalance");
-
-      if (issues.length === 0) {
+      const eligibility = getCustomerDeletionEligibility(customer);
+      if (eligibility.isEligible) {
         eligibleIds.push(customer.id);
-      } else {
-        if (issues.includes("invoices")) blockedBy.invoices += 1;
-        if (issues.includes("payments")) blockedBy.payments += 1;
-        if (issues.includes("ledgerEntries")) blockedBy.ledgerEntries += 1;
-        if (issues.includes("nonZeroBalance")) blockedBy.nonZeroBalance += 1;
-        if (issues.includes("otherReferences")) blockedBy.otherReferences += 1;
+        continue;
       }
+
+      blockedDetails.push({
+        customerId: customer.id,
+        customerCode: customer.customerCode,
+        reasons: eligibility.reasons,
+      });
+
+      if (eligibility.reasons.includes("invoices")) blockedBy.invoices += 1;
+      if (eligibility.reasons.includes("payments")) blockedBy.payments += 1;
+      if (eligibility.reasons.includes("ledgerEntries"))
+        blockedBy.ledgerEntries += 1;
+      if (eligibility.reasons.includes("ledgerTransactions"))
+        blockedBy.ledgerTransactions += 1;
+      if (eligibility.reasons.includes("nonZeroBalance"))
+        blockedBy.nonZeroBalance += 1;
+      if (eligibility.reasons.includes("otherReferences"))
+        blockedBy.otherReferences += 1;
     }
 
     const summary = {
@@ -103,8 +107,10 @@ export async function POST(req: NextRequest) {
       blockedBecauseOfInvoices: blockedBy.invoices,
       blockedBecauseOfPayments: blockedBy.payments,
       blockedBecauseOfLedgerEntries: blockedBy.ledgerEntries,
+      blockedBecauseOfLedgerTransactions: blockedBy.ledgerTransactions,
       blockedBecauseOfNonZeroBalance: blockedBy.nonZeroBalance,
       blockedBecauseOfOtherReferences: blockedBy.otherReferences,
+      blockedCustomerSample: blockedDetails.slice(0, 10),
     };
 
     if (mode === "preview") {
@@ -145,9 +151,10 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error("[POST /api/admin/customers/permanent-delete-empty]", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    const message =
+      error instanceof Error && "code" in error
+        ? `Delete failed: ${String((error as { code?: string }).code ?? error.message)}`
+        : "Delete failed while processing customer deletions.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

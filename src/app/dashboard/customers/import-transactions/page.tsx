@@ -9,11 +9,9 @@ import {
   FileText,
   Loader2,
   Upload,
-  AlertTriangle,
 } from "lucide-react";
-import { normalizeTallyName } from "@/lib/tally-xml-parser";
 
-type Step = "upload" | "parse" | "match" | "preview" | "importing" | "done";
+type Step = "upload" | "parse" | "preview" | "importing" | "done";
 
 interface PreviewSummary {
   totalVouchers: number;
@@ -56,6 +54,7 @@ interface PreviewSummary {
 export default function TransactionImportPage() {
   const [step, setStep] = useState<Step>("upload");
   const [fileName, setFileName] = useState("");
+  const [batchId, setBatchId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<PreviewSummary | null>(null);
@@ -70,26 +69,95 @@ export default function TransactionImportPage() {
 
   const handleFile = async (file: File) => {
     if (!file) return;
+    const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(
+        "The selected file is too large. Please upload a file smaller than 10MB.",
+      );
+      return;
+    }
+
     setError("");
     setLoading(true);
     setStep("parse");
+    setPreview(null);
+    setResult(null);
+    setBatchId(null);
     setFileName(file.name);
 
     const formData = new FormData();
     formData.append("file", file);
 
     try {
+      console.info("[TransactionImport] upload started", {
+        fileName: file.name,
+      });
       const res = await fetch("/api/tally/upload", {
         method: "POST",
         body: formData,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to parse Tally file");
-      setPreview(data as PreviewSummary);
+      const contentType = res.headers.get("content-type") || "";
+      let payload: {
+        batchId?: string;
+        error?: string;
+        details?: string;
+      } | null = null;
+      if (contentType.includes("application/json")) {
+        payload = await res.json().catch(() => null);
+      }
+      if (!res.ok) {
+        throw new Error(
+          payload?.details ||
+            payload?.error ||
+            `Transaction upload failed with status ${res.status}`,
+        );
+      }
+
+      const newBatchId = payload?.batchId as string | undefined;
+      if (!newBatchId) {
+        throw new Error("The upload did not create an import batch.");
+      }
+
+      setBatchId(newBatchId);
+      console.info("[TransactionImport] batch created", {
+        fileName: file.name,
+        batchId: newBatchId,
+      });
+
+      const previewRes = await fetch("/api/tally/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batchId: newBatchId }),
+      });
+      const previewContentType = previewRes.headers.get("content-type") || "";
+      let previewPayload:
+        | PreviewSummary
+        | { error?: string; details?: string }
+        | null = null;
+      if (previewContentType.includes("application/json")) {
+        previewPayload = await previewRes.json().catch(() => null);
+      }
+      if (!previewRes.ok) {
+        throw new Error(
+          (previewPayload as { details?: string; error?: string } | null)
+            ?.details ||
+            (previewPayload as { details?: string; error?: string } | null)
+              ?.error ||
+            "Failed to preview transactions",
+        );
+      }
+
+      setPreview(previewPayload as PreviewSummary);
       setStep("preview");
+      console.info("[TransactionImport] preview ready", {
+        fileName: file.name,
+        batchId: newBatchId,
+        totalVouchers:
+          (previewPayload as PreviewSummary | null)?.totalVouchers ?? 0,
+      });
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to parse Tally file",
+        err instanceof Error ? err.message : "Failed to parse transaction file",
       );
       setStep("upload");
     } finally {
@@ -98,7 +166,7 @@ export default function TransactionImportPage() {
   };
 
   const handleImport = async () => {
-    if (!preview) return;
+    if (!preview || !batchId) return;
     setLoading(true);
     setStep("importing");
     try {
@@ -106,6 +174,7 @@ export default function TransactionImportPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          batchId,
           vouchers: preview.sampleVouchers,
           sourceFileName: fileName,
         }),
@@ -154,10 +223,9 @@ export default function TransactionImportPage() {
     () => [
       { id: "upload", label: "1. Upload" },
       { id: "parse", label: "2. Parse" },
-      { id: "match", label: "3. Match" },
-      { id: "preview", label: "4. Preview" },
-      { id: "importing", label: "5. Import" },
-      { id: "done", label: "6. Done" },
+      { id: "preview", label: "3. Preview" },
+      { id: "importing", label: "4. Import" },
+      { id: "done", label: "5. Done" },
     ],
     [],
   );
@@ -186,7 +254,7 @@ export default function TransactionImportPage() {
         {steps.map((stepItem, index) => (
           <div key={stepItem.id} className="flex items-center">
             <div
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${step === stepItem.id ? "bg-blue-600 text-white" : ["parse", "match", "preview", "importing", "done"].includes(stepItem.id) && ["parse", "match", "preview", "importing", "done"].includes(step) ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-400"}`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${step === stepItem.id ? "bg-blue-600 text-white" : ["parse", "preview", "importing", "done"].includes(stepItem.id) && ["parse", "preview", "importing", "done"].includes(step) ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-400"}`}
             >
               {stepItem.label}
             </div>
@@ -208,8 +276,8 @@ export default function TransactionImportPage() {
               Upload Tally XML or CSV
             </p>
             <p className="text-sm text-slate-400 mt-1">
-              Supports XML exports and CSV with customer, voucher date, type,
-              amount columns
+              Supports XML exports and CSV files with customer, date, voucher
+              type, and debit/credit columns
             </p>
             <input
               ref={fileRef}
@@ -220,6 +288,9 @@ export default function TransactionImportPage() {
                 if (e.target.files?.[0]) handleFile(e.target.files[0]);
               }}
             />
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            Please upload a transaction file first.
           </div>
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
@@ -257,6 +328,12 @@ export default function TransactionImportPage() {
                 notes
               </div>
             </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+              <div className="font-medium text-slate-700">Batch</div>
+              <div className="text-xs text-slate-500">
+                {batchId ?? "Pending"}
+              </div>
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={handleDownloadReport}
@@ -266,7 +343,8 @@ export default function TransactionImportPage() {
               </button>
               <button
                 onClick={handleImport}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-colors"
+                disabled={!batchId || !preview || loading}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Upload className="h-4 w-4" /> Import Transactions
               </button>
@@ -401,6 +479,7 @@ export default function TransactionImportPage() {
                 setPreview(null);
                 setResult(null);
                 setError("");
+                setBatchId(null);
                 setFileName("");
               }}
               className="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl"

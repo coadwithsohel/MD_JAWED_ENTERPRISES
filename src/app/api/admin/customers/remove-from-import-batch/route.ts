@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth";
-import { toPaise } from "@/lib/money";
 
 const schema = z
   .object({
@@ -51,137 +50,56 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const rows = await prisma.customerImportRow.findMany({
-      where: { importBatchId, customerId: { not: null } },
-      select: {
-        customerId: true,
-        customer: {
-          select: {
-            id: true,
-            fullName: true,
-            openingBalance: true,
-            currentBalance: true,
-            _count: {
-              select: {
-                sales: true,
-                payments: true,
-                ledgers: true,
-                reminders: true,
-                importRows: true,
-                tallyVouchers: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    const customers = rows.map((row) => row.customer).filter(Boolean) as Array<{
-      id: string;
-      fullName: string;
-      openingBalance: unknown;
-      currentBalance: unknown;
-      _count: {
-        sales: number;
-        payments: number;
-        ledgers: number;
-        ledgerTransactions: number;
-        reminders: number;
-        importRows: number;
-        tallyVouchers: number;
-      };
-    }>;
-
-    const safeToDelete: string[] = [];
-    const skipped: Array<{ id: string; fullName: string; reason: string }> = [];
-    for (const customer of customers) {
-      const issues: string[] = [];
-      if (customer._count.sales > 0) issues.push("invoices");
-      if (customer._count.payments > 0) issues.push("payments");
-      if (customer._count.ledgers > 0) issues.push("ledgerEntries");
-      if (
-        customer._count.reminders > 0 ||
-        customer._count.importRows > 0 ||
-        customer._count.tallyVouchers > 0
-      )
-        issues.push("otherReferences");
-      if (
-        toPaise(customer.openingBalance) !== 0 ||
-        toPaise(customer.currentBalance) !== 0
-      )
-        issues.push("nonZeroBalance");
-
-      if (issues.length === 0) {
-        safeToDelete.push(customer.id);
-      } else {
-        skipped.push({
-          id: customer.id,
-          fullName: customer.fullName,
-          reason: issues.join(", "),
-        });
-      }
-    }
-
     const summary = {
       batchId: batch.id,
       batchFileName: batch.originalFileName,
       importedDate: batch.createdAt,
-      totalCustomersLinked: customers.length,
-      safeToDelete: safeToDelete.length,
-      skipped: skipped.length,
-      customersWithInvoices: customers.filter(
-        (customer) => customer._count.sales > 0,
-      ).length,
-      customersWithPayments: customers.filter(
-        (customer) => customer._count.payments > 0,
-      ).length,
-      customersWithLedgerHistory: customers.filter(
-        (customer) =>
-          customer._count.ledgers + customer._count.ledgerTransactions > 0,
-      ).length,
+      totalCustomersLinked: 0,
+      safeToDelete: 0,
+      skipped: 0,
+      customersWithInvoices: 0,
+      customersWithPayments: 0,
+      customersWithLedgerHistory: 0,
     };
+
+    await prisma.auditLog.create({
+      data: {
+        userId: auth.userId,
+        action:
+          mode === "execute"
+            ? "CUSTOMER_IMPORT_BATCH_CLEANUP_AUDIT"
+            : "CUSTOMER_IMPORT_BATCH_CLEANUP_PREVIEW",
+        entityType: "CustomerImportBatch",
+        entityId: batch.id,
+        oldData: { batchId: importBatchId, reason: reason ?? undefined },
+        newData: {
+          batchId: importBatchId,
+          status: "audit-only",
+          mode,
+          note: "Customer import batch cleanup is now audit-only and does not remove customer records.",
+        },
+      },
+    });
 
     if (mode === "preview") {
       return NextResponse.json({
         ok: true,
         mode: "preview",
         summary,
-        skipped,
+        skipped: [],
         message: "Preview only. No customer records were changed.",
       });
     }
 
-    const deletedIds: string[] = [];
-    await prisma.$transaction(async (tx) => {
-      for (const customerId of safeToDelete) {
-        await tx.customerImportRow.updateMany({
-          where: { importBatchId, customerId },
-          data: { customerId: null },
-        });
-        await tx.auditLog.create({
-          data: {
-            userId: auth.userId,
-            action: "CUSTOMER_IMPORT_BATCH_REMOVED",
-            entityType: "Customer",
-            entityId: customerId,
-            oldData: { batchId: importBatchId, reason: reason ?? undefined },
-            newData: { batchId: importBatchId, mode: "execute" },
-          },
-        });
-        await tx.customer.delete({ where: { id: customerId } });
-        deletedIds.push(customerId);
-      }
-    });
-
     return NextResponse.json({
       ok: true,
       mode: "execute",
-      deletedCount: deletedIds.length,
-      skippedCount: skipped.length,
+      deletedCount: 0,
+      skippedCount: 0,
       summary,
-      skipped,
+      skipped: [],
       message:
-        "Only empty customers linked to the selected batch were removed.",
+        "Import-batch customer cleanup is audit-only. No customer records were removed.",
     });
   } catch (error) {
     console.error(

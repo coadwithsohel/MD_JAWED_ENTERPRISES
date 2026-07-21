@@ -17,6 +17,44 @@ test("parseTallyCsv normalizes customer, date, and amounts", () => {
   assert.equal(vouchers[1].credit, 2000);
 });
 
+test("parseTallyCsv supports transaction import headers", () => {
+  const csv = [
+    "Customer Name,Mobile,Date,Voucher Type,Voucher Number,Particulars,Debit,Credit,Source Entry Key,Source GUID,Source Remote ID,Source VCH Key,Source Master ID,Narration,Source File",
+    "Ahamad Khan,9999999999,2026-07-20,Sales,INV-1001,Mobile sale,5000,0,ENT-1,GUID-1,REM-1,VCH-1,MASTER-1,Mobile sale,transaction_import_final.csv",
+  ].join("\n");
+
+  const vouchers = parseTallyCsv(csv, "transaction_import_final.csv");
+  assert.equal(vouchers.length, 1);
+  assert.equal(vouchers[0].customerName, "Ahamad Khan");
+  assert.equal(vouchers[0].voucherType, "SALES");
+  assert.equal(vouchers[0].debit, 5000);
+  assert.equal(vouchers[0].tallyGuid, "GUID-1");
+});
+
+test("parseTallyCsv supports transaction date headers", () => {
+  const csv = [
+    "Customer Name,Transaction Date,Voucher Type,Debit,Credit",
+    "Ahamad Khan,2026-07-22,Sales,1200,0",
+  ].join("\n");
+
+  const vouchers = parseTallyCsv(csv, "transaction_date.csv");
+  assert.equal(vouchers.length, 1);
+  assert.equal(vouchers[0].voucherDate, "2026-07-22");
+});
+
+test("parseTallyCsv handles UTF-8 BOM and whitespace-padded headers", () => {
+  const csv = [
+    "\uFEFF Customer Name , Mobile , Date , Voucher Type , Voucher Number , Particulars , Debit , Credit , Source Entry Key , Source GUID , Source Remote ID , Source VCH Key , Source Master ID , Narration , Source File ",
+    "Ahamad Khan,9999999999,2026-07-20,Sales,INV-1001,Mobile sale,5000,0,ENT-1,GUID-1,REM-1,VCH-1,MASTER-1,Mobile sale,transaction_import_final.csv",
+  ].join("\n");
+
+  const vouchers = parseTallyCsv(csv, "transaction_import_final.csv");
+  assert.equal(vouchers.length, 1);
+  assert.equal(vouchers[0].customerName, "Ahamad Khan");
+  assert.equal(vouchers[0].voucherType, "SALES");
+  assert.equal(vouchers[0].debit, 5000);
+});
+
 test("validateVouchers counts totals and voucher categories", () => {
   const result = validateVouchers([
     {

@@ -6,7 +6,6 @@ import {
   Save,
   CheckCircle2,
   Download,
-  Users,
   UserCheck,
   UserX,
   Trash2,
@@ -96,15 +95,11 @@ export default function SettingsPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewSummary, setPreviewSummary] = useState<string | null>(null);
   const [showBulkDialog, setShowBulkDialog] = useState<
-    "deactivate" | "restore" | "delete" | "batch" | null
+    "deactivate" | "restore" | "delete" | null
   >(null);
   const [confirmationText, setConfirmationText] = useState("");
   const [reason, setReason] = useState("");
   const [understood, setUnderstood] = useState(false);
-  const [importBatchId, setImportBatchId] = useState("");
-  const [importBatchOptions, setImportBatchOptions] = useState<
-    Array<{ id: string; originalFileName: string }>
-  >([]);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -141,15 +136,6 @@ export default function SettingsPage() {
         }
       })
       .catch(() => setUserRole(null));
-
-    fetch("/api/tally/import")
-      .then((r) => r.json())
-      .then((d) => {
-        if (Array.isArray(d?.batches)) {
-          setImportBatchOptions(d.batches);
-        }
-      })
-      .catch(() => setImportBatchOptions([]));
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -189,7 +175,7 @@ export default function SettingsPage() {
   const isAdmin = userRole === "OWNER" || userRole === "MANAGER";
 
   const loadPreviewForAction = async (
-    action: "deactivate" | "restore" | "delete" | "batch",
+    action: "deactivate" | "restore" | "delete",
   ) => {
     setBulkError(null);
     setPreviewSummary(null);
@@ -204,9 +190,6 @@ export default function SettingsPage() {
         endpoint = "/api/admin/customers/restore-all";
       } else if (action === "delete") {
         endpoint = "/api/admin/customers/permanent-delete-empty";
-      } else if (action === "batch") {
-        endpoint = "/api/admin/customers/remove-from-import-batch";
-        (body as Record<string, unknown>).importBatchId = importBatchId;
       }
 
       const res = await fetch(endpoint, {
@@ -230,15 +213,18 @@ export default function SettingsPage() {
           `Preview: ${count} inactive customers will be restored.`,
         );
       } else if (action === "delete") {
-        const count = data.summary?.eligibleForDeletion ?? 0;
-        setPreviewSummary(
-          `Preview: ${count} empty customers are eligible for permanent deletion.`,
-        );
-      } else if (action === "batch") {
-        const count = data.summary?.safeToDelete ?? 0;
-        setPreviewSummary(
-          `Preview: ${count} empty customers linked to the selected batch will be removed.`,
-        );
+        const summary = data.summary ?? {};
+        const eligible = summary.eligibleForDeletion ?? 0;
+        const blocked = summary.totalCustomersChecked - eligible;
+        const parts = [
+          `Preview: ${eligible} empty customers are eligible for permanent deletion.`,
+        ];
+        if (blocked > 0) {
+          parts.push(
+            `Blocked: ${blocked} customers have financial or import references (${summary.blockedBecauseOfInvoices ?? 0} invoices, ${summary.blockedBecauseOfPayments ?? 0} payments, ${summary.blockedBecauseOfLedgerEntries ?? 0} ledger entries, ${summary.blockedBecauseOfLedgerTransactions ?? 0} ledger transactions, ${summary.blockedBecauseOfNonZeroBalance ?? 0} balances, ${summary.blockedBecauseOfOtherReferences ?? 0} other references).`,
+          );
+        }
+        setPreviewSummary(parts.join(" "));
       }
     } catch (err) {
       setBulkError(err instanceof Error ? err.message : "Preview failed");
@@ -248,7 +234,7 @@ export default function SettingsPage() {
   };
 
   const openBulkDialog = async (
-    action: "deactivate" | "restore" | "delete" | "batch",
+    action: "deactivate" | "restore" | "delete",
   ) => {
     setShowBulkDialog(action);
     setConfirmationText("");
@@ -257,13 +243,10 @@ export default function SettingsPage() {
     setPreviewSummary(null);
     setBulkError(null);
     setBulkMessage(null);
-    if (action === "batch" && !importBatchId) {
-      setImportBatchId("");
-    }
     await loadPreviewForAction(action);
   };
 
-  const runBulkAction = async (action: string) => {
+  const runBulkAction = async (action: "deactivate" | "restore" | "delete") => {
     if (!isAdmin) {
       setBulkError("Only admins can use customer data management actions.");
       return;
@@ -294,14 +277,6 @@ export default function SettingsPage() {
       } else if (action === "delete") {
         endpoint = "/api/admin/customers/permanent-delete-empty";
         body = { mode: "execute", confirmation: confirmationText, reason };
-      } else if (action === "batch") {
-        endpoint = "/api/admin/customers/remove-from-import-batch";
-        body = {
-          mode: "execute",
-          confirmation: confirmationText,
-          importBatchId,
-          reason,
-        };
       }
 
       const res = await fetch(endpoint, {
@@ -317,7 +292,6 @@ export default function SettingsPage() {
       setConfirmationText("");
       setReason("");
       setUnderstood(false);
-      setImportBatchId("");
     } catch (err) {
       setBulkError(err instanceof Error ? err.message : "Action failed");
     } finally {
@@ -440,23 +414,6 @@ export default function SettingsPage() {
                 <span className="text-sm text-slate-500">
                   Re-activate inactive customers without touching financial
                   history.
-                </span>
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void openBulkDialog("batch")}
-              className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-violet-300 hover:bg-violet-50"
-            >
-              <Users className="mt-0.5 h-5 w-5 text-violet-600" />
-              <span>
-                <span className="block font-semibold text-slate-900">
-                  Remove Import Batch Customers
-                </span>
-                <span className="text-sm text-slate-500">
-                  Safely remove only empty customers linked to a selected import
-                  batch.
                 </span>
               </span>
             </button>
@@ -678,8 +635,6 @@ export default function SettingsPage() {
                       "Restore All Inactive Customers"}
                     {showBulkDialog === "delete" &&
                       "Permanently Delete Empty Customers"}
-                    {showBulkDialog === "batch" &&
-                      "Remove Customers From Import Batch"}
                   </h3>
                   <p className="text-sm text-slate-500">
                     This action requires an explicit confirmation.
@@ -693,7 +648,6 @@ export default function SettingsPage() {
                   setConfirmationText("");
                   setReason("");
                   setUnderstood(false);
-                  setImportBatchId("");
                 }}
                 className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
               >
@@ -709,25 +663,6 @@ export default function SettingsPage() {
               {previewSummary && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-700">
                   {previewSummary}
-                </div>
-              )}
-              {showBulkDialog === "batch" && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Import Batch
-                  </label>
-                  <select
-                    value={importBatchId}
-                    onChange={(e) => setImportBatchId(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                  >
-                    <option value="">Select import batch</option>
-                    {importBatchOptions.map((batch) => (
-                      <option key={batch.id} value={batch.id}>
-                        {batch.originalFileName}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               )}
               <div>
@@ -791,7 +726,6 @@ export default function SettingsPage() {
                     setConfirmationText("");
                     setReason("");
                     setUnderstood(false);
-                    setImportBatchId("");
                   }}
                   className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
                 >
@@ -799,7 +733,7 @@ export default function SettingsPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => runBulkAction(showBulkDialog)}
+                  onClick={() => void runBulkAction(showBulkDialog)}
                   disabled={
                     bulkLoading !== null ||
                     confirmationText.trim().length === 0 ||
@@ -814,9 +748,7 @@ export default function SettingsPage() {
                     ? "Confirm Deactivate"
                     : showBulkDialog === "restore"
                       ? "Confirm Restore"
-                      : showBulkDialog === "delete"
-                        ? "Confirm Delete"
-                        : "Confirm Removal"}
+                      : "Confirm Delete"}
                 </button>
               </div>
             </div>

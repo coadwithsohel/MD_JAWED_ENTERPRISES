@@ -1,221 +1,189 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { requireAuth } from '@/lib/auth';
-import { parseTallyXml, validateVouchers } from '@/lib/tally-xml-parser';
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
+import {
+  parseTallyCsv,
+  parseTallyXml,
+  type TallyVoucherInput,
+  validateTransactionCsvHeaders,
+  validateVouchers,
+} from "@/lib/tally-xml-parser";
 
-/**
- * POST /api/tally/upload
- *
- * Accepts a Tally XML file upload.
- * Parses the XML, validates vouchers, matches customers, and returns preview data.
- * Does NOT import anything — use /api/tally/import to import.
- *
- * Body: FormData with field 'file' containing the Tally XML
- * Alternative: JSON with { xml: string, sourceFileName?: string }
- */
 export async function POST(req: NextRequest) {
   const { auth, error } = await requireAuth(req);
   if (error) return error;
 
+  let rawContent = "";
+  let sourceFileName = "tally-import.csv";
+  let fileSize = 0;
+  const contentType = req.headers.get("content-type") || "";
+
   try {
-    let xmlContent: string;
-    let sourceFileName = 'tally-export.xml';
-
-    // Check content type
-    const contentType = req.headers.get('content-type') || '';
-
-    if (contentType.includes('multipart/form-data')) {
-      // Form data upload
+    if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
-      const file = formData.get('file');
+      const file = formData.get("file");
       if (!file || !(file instanceof File)) {
-        return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+        return NextResponse.json(
+          {
+            error: "No file provided",
+            details: "Upload a CSV or XML transaction file",
+          },
+          { status: 400 },
+        );
       }
-      sourceFileName = file.name || 'tally-export.xml';
-      xmlContent = await file.text();
+      sourceFileName = file.name || sourceFileName;
+      fileSize = file.size;
+      rawContent = await file.text();
     } else {
-      // JSON upload { xml, sourceFileName }
-      const body = await req.json();
-      xmlContent = body.xml;
-      sourceFileName = body.sourceFileName || 'tally-export.xml';
+      const body = await req.json().catch(() => ({}));
+      rawContent = body.xml || body.content || "";
+      sourceFileName = body.sourceFileName || sourceFileName;
     }
 
-    if (!xmlContent || xmlContent.trim().length === 0) {
-      return NextResponse.json({ error: 'Empty XML content' }, { status: 400 });
+    if (!rawContent || rawContent.trim().length === 0) {
+      return NextResponse.json(
+        {
+          error: "Empty file content",
+          details: "The uploaded file did not contain any data",
+        },
+        { status: 400 },
+      );
     }
 
-    // Parse XML
-    const vouchers = parseTallyXml(xmlContent, sourceFileName);
+    const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+    if (fileSize > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        {
+          error: "File too large",
+          details: "Please upload a file smaller than 10MB",
+        },
+        { status: 413 },
+      );
+    }
+
+    const isCsvUpload =
+      /\.csv$/i.test(sourceFileName) ||
+      !rawContent.trim().startsWith("<") ||
+      contentType.includes("csv");
+
+    let vouchers: TallyVoucherInput[] = [];
+    let csvValidationError: string | null = null;
+
+    if (isCsvUpload) {
+      const csvHeaders =
+        rawContent
+          .split(/\r?\n/)
+          .find((line) => line.trim().length > 0)
+          ?.split(",")
+          .map((header) => header.trim()) || [];
+      const csvHeaderValidation = validateTransactionCsvHeaders(csvHeaders);
+      if (!csvHeaderValidation.isValid) {
+        csvValidationError = `CSV headers are invalid. Missing required columns: ${csvHeaderValidation.missing.join(", ")}`;
+      } else {
+        vouchers = parseTallyCsv(rawContent, sourceFileName);
+      }
+    } else {
+      vouchers = parseTallyXml(rawContent, sourceFileName);
+    }
+
+    if (csvValidationError) {
+      return NextResponse.json(
+        {
+          error: "Unsupported transaction file format",
+          details: csvValidationError,
+        },
+        { status: 422 },
+      );
+    }
 
     if (vouchers.length === 0) {
-      return NextResponse.json({
-        error: 'No vouchers found in the XML. Please check the file format.',
-        details: 'Ensure the XML contains valid Tally VOUCHER blocks with party ledger entries.',
-      }, { status: 422 });
+      return NextResponse.json(
+        {
+          error: "No transaction rows found",
+          details:
+            "The uploaded file did not contain any parseable transactions.",
+        },
+        { status: 422 },
+      );
     }
 
-    // Validate
     const { valid, invalid, summary } = validateVouchers(vouchers);
-
-    // Get all customers for matching
-    const allCustomers = await prisma.customer.findMany({
-      select: { id: true, fullName: true, customerCode: true, mobile: true },
+    if (!valid.length) {
+      return NextResponse.json(
+        {
+          error: "No valid rows to import",
+          details:
+            "The CSV rows were missing required values or contained invalid amounts.",
+        },
+        { status: 422 },
+      );
+    }
+    const batch = await prisma.tallyImportBatch.create({
+      data: {
+        originalFileName: sourceFileName,
+        storedFileName: sourceFileName,
+        importedById: auth.userId,
+        status: "UPLOADED",
+      },
     });
 
-    function normalizeName(name: string): string {
-      return name.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-    }
+    await prisma.tallyVoucher.createMany({
+      data: valid.map((voucher) => ({
+        importBatchId: batch.id,
+        customerName: voucher.customerName,
+        voucherDate: new Date(voucher.voucherDate),
+        voucherType: voucher.voucherType,
+        voucherNumber: voucher.voucherNumber || null,
+        debit: voucher.debit || 0,
+        credit: voucher.credit || 0,
+        narration: voucher.narration || null,
+        reference: voucher.reference || null,
+        tallyGuid: voucher.tallyGuid || null,
+        tallyRemoteId: voucher.tallyRemoteId || null,
+        tallyMasterId: voucher.tallyMasterId || null,
+        voucherKey: voucher.voucherKey || null,
+        sourceFileName: voucher.sourceFileName || sourceFileName,
+        importStatus: "VALID",
+      })),
+    });
 
-    const nameIndex = new Map<string, typeof allCustomers[number]>();
-    for (const c of allCustomers) {
-      const key = normalizeName(c.fullName);
-      if (!nameIndex.has(key)) nameIndex.set(key, c);
-    }
-
-    // Check for existing GUIDs
-    const existingGuids = new Set<string>();
-    const guids = vouchers.map(v => v.tallyGuid).filter(Boolean) as string[];
-    if (guids.length > 0) {
-      const existing = await prisma.tallyVoucher.findMany({
-        where: { tallyGuid: { in: guids } },
-        select: { tallyGuid: true },
-      });
-      for (const e of existing) {
-        if (e.tallyGuid) existingGuids.add(e.tallyGuid);
-      }
-    }
-
-    // Match customers and categorize
-    const matchedCustomers: Array<{ customerName: string; customerId: string; customerCode: string; vouchers: number }> = [];
-    const unmatchedCustomerNames: string[] = [];
-    const duplicateVouchers: Array<{ customerName: string; voucherNumber?: string; voucherDate: string }> = [];
-    const matchedMap = new Map<string, { customerId: string; customerCode: string; count: number }>();
-    const unmatchedSet = new Set<string>();
-
-    let duplicateCount = 0;
-
-    for (const v of vouchers) {
-      // Check GUID duplicate
-      if (v.tallyGuid && existingGuids.has(v.tallyGuid)) {
-        duplicateCount++;
-        duplicateVouchers.push({ customerName: v.customerName, voucherNumber: v.voucherNumber, voucherDate: v.voucherDate });
-        continue;
-      }
-
-      // Match customer
-      const normalizedInput = normalizeName(v.customerName);
-      let matchedCustomer = nameIndex.get(normalizedInput);
-
-      // Partial match
-      if (!matchedCustomer) {
-        for (const [key, cust] of nameIndex) {
-          if (key.includes(normalizedInput) || normalizedInput.includes(key)) {
-            matchedCustomer = cust;
-            break;
-          }
-        }
-      }
-
-      if (matchedCustomer) {
-        const existing = matchedMap.get(matchedCustomer.id);
-        if (existing) {
-          existing.count++;
-        } else {
-          matchedMap.set(matchedCustomer.id, {
-            customerId: matchedCustomer.id,
-            customerCode: matchedCustomer.customerCode,
-            count: 1,
-          });
-        }
-      } else {
-        unmatchedSet.add(v.customerName);
-      }
-    }
-
-    // Prepare matched customer list
-    for (const [customerId, data] of matchedMap) {
-      const customer = allCustomers.find(c => c.id === customerId);
-      matchedCustomers.push({
-        customerName: customer?.fullName || customerId,
-        customerId,
-        customerCode: data.customerCode,
-        vouchers: data.count,
-      });
-    }
-    unmatchedCustomerNames.push(...unmatchedSet);
-
-    // Compute per-customer expected closing balances
-    interface CustomerClosing {
-      customerId: string;
-      customerName: string;
-      openingBalance: number;
-      totalDebit: number;
-      totalCredit: number;
-      expectedClosing: number;
-    }
-
-    const customerClosings: CustomerClosing[] = [];
-
-    for (const v of valid) {
-      const normalizedInput = normalizeName(v.customerName);
-      let matchedCustomer = nameIndex.get(normalizedInput);
-      if (!matchedCustomer) {
-        for (const [, cust] of nameIndex) {
-          if (normalizedInput.includes(cust.fullName.toLowerCase().replace(/[^a-z0-9]/g, ''))) {
-            matchedCustomer = cust;
-            break;
-          }
-        }
-      }
-
-      if (!matchedCustomer) continue;
-
-      let closing = customerClosings.find(c => c.customerId === matchedCustomer.id);
-      if (!closing) {
-        const dbCustomer = await prisma.customer.findUnique({
-          where: { id: matchedCustomer.id },
-          select: { openingBalance: true },
-        });
-        const opening = dbCustomer ? Number(dbCustomer.openingBalance) : 0;
-        closing = {
-          customerId: matchedCustomer.id,
-          customerName: matchedCustomer.fullName,
-          openingBalance: opening,
-          totalDebit: 0,
-          totalCredit: 0,
-          expectedClosing: opening,
-        };
-        customerClosings.push(closing);
-      }
-
-      closing.totalDebit += v.debit;
-      closing.totalCredit += v.credit;
-      closing.expectedClosing = closing.openingBalance + closing.totalDebit - closing.totalCredit;
-    }
+    console.info("[tally/upload] uploaded", {
+      fileName: sourceFileName,
+      batchId: batch.id,
+      rowCount: valid.length,
+      invalidCount: invalid.length,
+    });
 
     return NextResponse.json({
-      ok: invalid.length === 0,
-      sourceFileName,
-      totalVouchers: vouchers.length,
+      ok: true,
+      batchId: batch.id,
+      fileName: sourceFileName,
+      status: "PARSED",
       summary,
+      totalRows: vouchers.length,
+      validRows: valid.length,
+      invalidRows: invalid.length,
+      matchedRows: valid.length,
+      unmatchedRows: invalid.length,
+      duplicateRows: 0,
+      totalVouchers: valid.length,
       invalidCount: invalid.length,
-      duplicateCount,
-      matchedCustomers: matchedCustomers.sort((a, b) => a.customerName.localeCompare(b.customerName)),
-      unmatchedCustomerNames: unmatchedCustomerNames.sort(),
-      duplicateVouchers: duplicateVouchers.slice(0, 50),
-      customerClosings: customerClosings.sort((a, b) => a.customerName.localeCompare(b.customerName)),
-      sampleVouchers: valid.slice(0, 20),
-      warnings: [
-        ...(invalid.length > 0 ? [`${invalid.length} invalid vouchers found`] : []),
-        ...(duplicateCount > 0 ? [`${duplicateCount} duplicate vouchers (already imported)`] : []),
-        ...(unmatchedCustomerNames.length > 0 ? [`${unmatchedCustomerNames.length} unmatched customers — need manual mapping`] : []),
-      ],
     });
   } catch (err) {
-    console.error('[POST /api/tally/upload]', err);
-    return NextResponse.json({
-      error: 'Failed to parse Tally XML',
-      details: err instanceof Error ? err.message : 'Unknown error',
-    }, { status: 500 });
+    console.error("Transaction import failed", {
+      fileName: sourceFileName,
+      fileType: contentType || "unknown",
+      fileSize,
+      stage: "upload",
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
+    return NextResponse.json(
+      {
+        error: "Failed to process transaction file",
+        details:
+          "The server could not process the transaction upload. Please verify the file format and try again.",
+      },
+      { status: 500 },
+    );
   }
 }
