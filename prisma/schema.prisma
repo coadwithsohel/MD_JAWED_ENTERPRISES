@@ -210,6 +210,7 @@ model Customer {
   sales                 Sale[]
   payments              Payment[]
   ledgers               CreditLedger[]
+  ledgerTransactions    CustomerLedgerTransaction[]
   reminders             Reminder[]
   importRows            CustomerImportRow[]
   tallyVouchers         TallyVoucher[]
@@ -509,27 +510,28 @@ model CustomerImportRow {
 // ─── Tally Voucher Import ────────────────────────────────────────────────────
 
 model TallyImportBatch {
-  id              String   @id @default(cuid())
-  originalFileName String
-  storedFileName  String?
-  importDate      DateTime @default(now())
-  importedById    String
-  importedBy      User     @relation(fields: [importedById], references: [id])
-  totalVouchers   Int      @default(0)
-  salesCount      Int      @default(0)
-  receiptCount    Int      @default(0)
-  debitNoteCount  Int      @default(0)
-  creditNoteCount Int      @default(0)
-  duplicateCount  Int      @default(0)
-  skippedCount    Int      @default(0)
-  errorCount      Int      @default(0)
-  debitTotal      Decimal  @default(0) @db.Decimal(14, 2)
-  creditTotal     Decimal  @default(0) @db.Decimal(14, 2)
-  status          ImportStatus @default(UPLOADED)
-  errorSummary    Json?
-  completedAt     DateTime?
-  createdAt       DateTime @default(now())
-  vouchers        TallyVoucher[]
+  id                  String   @id @default(cuid())
+  originalFileName    String
+  storedFileName      String?
+  importDate          DateTime @default(now())
+  importedById        String
+  importedBy          User     @relation(fields: [importedById], references: [id])
+  totalVouchers       Int      @default(0)
+  salesCount          Int      @default(0)
+  receiptCount        Int      @default(0)
+  debitNoteCount      Int      @default(0)
+  creditNoteCount     Int      @default(0)
+  duplicateCount      Int      @default(0)
+  skippedCount        Int      @default(0)
+  errorCount          Int      @default(0)
+  debitTotal          Decimal  @default(0) @db.Decimal(14, 2)
+  creditTotal         Decimal  @default(0) @db.Decimal(14, 2)
+  status              ImportStatus @default(UPLOADED)
+  errorSummary        Json?
+  completedAt         DateTime?
+  createdAt           DateTime @default(now())
+  vouchers            TallyVoucher[]
+  ledgerTransactions  CustomerLedgerTransaction[]
 
   @@index([importedById])
   @@index([createdAt])
@@ -566,4 +568,31 @@ model TallyVoucher {
   @@index([customerId])
   @@index([tallyGuid])
   @@index([voucherDate])
+}
+
+model CustomerLedgerTransaction {
+  id              String   @id @default(cuid())
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id])
+  transactionDate DateTime
+  voucherType     String
+  voucherNumber   String?
+  particulars     String
+  debit           Decimal  @default(0) @db.Decimal(14, 2)
+  credit          Decimal  @default(0) @db.Decimal(14, 2)
+  sourceSystem    String?  @default("TALLY")
+  sourceGuid      String?
+  sourceRemoteId  String?
+  sourceVchKey    String?
+  sourceMasterId  String?
+  importBatchId   String?
+  importBatch     TallyImportBatch? @relation(fields: [importBatchId], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([customerId, transactionDate])
+  @@index([importBatchId])
+  @@index([sourceGuid])
+  @@index([sourceRemoteId])
+  @@unique([sourceSystem, sourceGuid])
 }

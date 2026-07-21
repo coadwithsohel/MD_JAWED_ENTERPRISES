@@ -115,7 +115,12 @@ export default function Sidebar() {
     },
     {
       href: "/dashboard/customers/import",
-      label: "Excel Import",
+      label: "Customer Import",
+      icon: Upload,
+    },
+    {
+      href: "/dashboard/customers/import-transactions",
+      label: "Transaction Import",
       icon: Upload,
     },
     { href: "/dashboard/settings", label: "Settings", icon: Settings },

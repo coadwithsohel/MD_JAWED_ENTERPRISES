@@ -1,28 +1,28 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { requireAuth } from '@/lib/auth';
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type VoucherType =
-  | 'OPENING_BALANCE'
-  | 'SALE'
-  | 'PAYMENT'
-  | 'CREDIT_NOTE'
-  | 'DEBIT_NOTE'
-  | 'REFUND'
-  | 'ADJUSTMENT';
+  | "OPENING_BALANCE"
+  | "SALE"
+  | "PAYMENT"
+  | "CREDIT_NOTE"
+  | "DEBIT_NOTE"
+  | "REFUND"
+  | "ADJUSTMENT";
 
 interface LedgerEntry {
   id: string;
-  date: string;          // ISO string
+  date: string; // ISO string
   particulars: string;
   voucherType: VoucherType;
   voucherNumber: string;
-  debit: string;         // serialised as string for JSON safety
+  debit: string; // serialised as string for JSON safety
   credit: string;
   runningBalance: string;
-  balanceLabel: string;  // "Dr" | "Cr" | "Settled"
+  balanceLabel: string; // "Dr" | "Cr" | "Settled"
   sourceId: string;
   status: string;
 }
@@ -40,31 +40,60 @@ function toPaise(value: unknown): number {
 /** Format integer paise back to "₹1,23,456.00" style string. */
 function fromPaise(paise: number): string {
   const rupees = Math.abs(paise) / 100;
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(rupees);
 }
 
-function balanceLabel(paise: number): 'Dr' | 'Cr' | 'Settled' {
-  if (paise > 0) return 'Dr';
-  if (paise < 0) return 'Cr';
-  return 'Settled';
+function balanceLabel(paise: number): "Dr" | "Cr" | "Settled" {
+  if (paise > 0) return "Dr";
+  if (paise < 0) return "Cr";
+  return "Settled";
 }
 
 // Map CreditLedger transactionType → our VoucherType
 function mapLedgerType(t: string): VoucherType {
   switch (t) {
-    case 'OPENING_BALANCE': return 'OPENING_BALANCE';
-    case 'CREDIT_SALE':     return 'SALE';
-    case 'PAYMENT_RECEIVED':return 'PAYMENT';
-    case 'PAYMENT_REVERSAL':return 'DEBIT_NOTE';
-    case 'SALE_CANCELLED':  return 'CREDIT_NOTE';
-    case 'RETURN_CREDIT':   return 'CREDIT_NOTE';
-    case 'ADJUSTMENT':      return 'ADJUSTMENT';
-    default:                return 'ADJUSTMENT';
+    case "OPENING_BALANCE":
+      return "OPENING_BALANCE";
+    case "CREDIT_SALE":
+      return "SALE";
+    case "PAYMENT_RECEIVED":
+      return "PAYMENT";
+    case "PAYMENT_REVERSAL":
+      return "DEBIT_NOTE";
+    case "SALE_CANCELLED":
+      return "CREDIT_NOTE";
+    case "RETURN_CREDIT":
+      return "CREDIT_NOTE";
+    case "ADJUSTMENT":
+      return "ADJUSTMENT";
+    default:
+      return "ADJUSTMENT";
+  }
+}
+
+function mapImportedTransactionType(t: string): VoucherType {
+  switch (t.toUpperCase()) {
+    case "SALES":
+    case "SALE":
+      return "SALE";
+    case "RECEIPT":
+      return "PAYMENT";
+    case "DEBIT_NOTE":
+      return "DEBIT_NOTE";
+    case "CREDIT_NOTE":
+      return "CREDIT_NOTE";
+    case "JOURNAL":
+    case "ADJUSTMENT":
+      return "ADJUSTMENT";
+    case "OPENING_BALANCE":
+      return "OPENING_BALANCE";
+    default:
+      return "ADJUSTMENT";
   }
 }
 
@@ -81,16 +110,19 @@ export async function GET(
   // 2. Resolve params
   const { id: customerId } = await params;
   if (!customerId || customerId.length < 4) {
-    return NextResponse.json({ error: 'Invalid customer ID' }, { status: 400 });
+    return NextResponse.json({ error: "Invalid customer ID" }, { status: 400 });
   }
 
   // 3. Query parameters
   const url = req.nextUrl;
-  const fromDate  = url.searchParams.get('from');
-  const toDate    = url.searchParams.get('to');
-  const vType     = url.searchParams.get('type');   // VoucherType filter
-  const page      = Math.max(1, parseInt(url.searchParams.get('page') ?? '1'));
-  const limit     = Math.min(200, Math.max(10, parseInt(url.searchParams.get('limit') ?? '50')));
+  const fromDate = url.searchParams.get("from");
+  const toDate = url.searchParams.get("to");
+  const vType = url.searchParams.get("type"); // VoucherType filter
+  const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1"));
+  const limit = Math.min(
+    200,
+    Math.max(10, parseInt(url.searchParams.get("limit") ?? "50")),
+  );
 
   // 4. Verify customer exists
   const customer = await prisma.customer.findUnique({
@@ -115,7 +147,7 @@ export async function GET(
   });
 
   if (!customer) {
-    return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
+    return NextResponse.json({ error: "Customer not found" }, { status: 404 });
   }
 
   // 5. Build date range filter for CreditLedger
@@ -142,10 +174,10 @@ export async function GET(
   const ledgerRecords = await prisma.creditLedger.findMany({
     where: {
       customerId,
-      transactionType: { not: 'OPENING_BALANCE' },
+      transactionType: { not: "OPENING_BALANCE" },
       ...(Object.keys(dateFilter).length ? { createdAt: dateFilter } : {}),
     },
-    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     include: {
       sale: {
         select: {
@@ -184,11 +216,11 @@ export async function GET(
     where: {
       customerId,
       id: { notIn: Array.from(ledgerSaleIds) },
-      status: { not: 'CANCELLED' },
-      saleType: { in: ['CREDIT', 'PARTIAL'] },
+      status: { not: "CANCELLED" },
+      saleType: { in: ["CREDIT", "PARTIAL"] },
       ...(Object.keys(dateFilter).length ? { createdAt: dateFilter } : {}),
     },
-    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
       invoiceNumber: true,
@@ -206,10 +238,10 @@ export async function GET(
     where: {
       customerId,
       id: { notIn: Array.from(ledgerPaymentIds) },
-      status: 'COMPLETED',
+      status: "COMPLETED",
       ...(Object.keys(dateFilter).length ? { paymentDate: dateFilter } : {}),
     },
-    orderBy: [{ paymentDate: 'asc' }, { id: 'asc' }],
+    orderBy: [{ paymentDate: "asc" }, { id: "asc" }],
     select: {
       id: true,
       receiptNumber: true,
@@ -219,6 +251,44 @@ export async function GET(
       status: true,
     },
   });
+
+  let importedTransactions: Array<{
+    id: string;
+    transactionDate: Date;
+    voucherType: string;
+    voucherNumber: string | null;
+    particulars: string;
+    debit: unknown;
+    credit: unknown;
+    sourceSystem: string | null;
+  }> = [];
+
+  try {
+    importedTransactions = await prisma.customerLedgerTransaction.findMany({
+      where: {
+        customerId,
+        ...(Object.keys(dateFilter).length
+          ? { transactionDate: dateFilter }
+          : {}),
+      },
+      orderBy: [{ transactionDate: "asc" }, { id: "asc" }],
+      select: {
+        id: true,
+        transactionDate: true,
+        voucherType: true,
+        voucherNumber: true,
+        particulars: true,
+        debit: true,
+        credit: true,
+        sourceSystem: true,
+      },
+    });
+  } catch (error) {
+    console.warn(
+      "Customer ledger fallback: imported transactions unavailable",
+      error,
+    );
+  }
 
   // 8. Normalize all records into unified LedgerEntry list (unsorted first)
   const rawEntries: Array<{
@@ -237,27 +307,28 @@ export async function GET(
   // From CreditLedger records (OPENING_BALANCE rows already excluded above)
   for (const r of ledgerRecords) {
     const vType2 = mapLedgerType(r.transactionType);
-    const isDebit = ['SALE', 'DEBIT_NOTE'].includes(vType2);
+    const isDebit = ["SALE", "DEBIT_NOTE"].includes(vType2);
     const amtPaise = toPaise(r.amount);
 
-    let particulars = r.description ?? vType2.replace(/_/g, ' ');
-    let voucherNumber = '';
+    let particulars = r.description ?? vType2.replace(/_/g, " ");
+    let voucherNumber = "";
     let sourceId = r.id;
-    let status = 'Completed';
+    let status = "Completed";
 
     if (r.sale) {
       voucherNumber = r.sale.invoiceNumber;
       sourceId = r.sale.id;
-      status = r.sale.paymentStatus === 'PAID'
-        ? 'Paid'
-        : r.sale.paymentStatus === 'PARTIALLY_PAID'
-          ? 'Partial'
-          : r.sale.paymentStatus === 'OVERDUE'
-            ? 'Overdue'
-            : 'Unpaid';
-      if (vType2 === 'SALE') {
+      status =
+        r.sale.paymentStatus === "PAID"
+          ? "Paid"
+          : r.sale.paymentStatus === "PARTIALLY_PAID"
+            ? "Partial"
+            : r.sale.paymentStatus === "OVERDUE"
+              ? "Overdue"
+              : "Unpaid";
+      if (vType2 === "SALE") {
         particulars = `Sales Invoice — ${r.sale.invoiceNumber}`;
-      } else if (vType2 === 'CREDIT_NOTE') {
+      } else if (vType2 === "CREDIT_NOTE") {
         particulars = `Sale Cancelled — ${r.sale.invoiceNumber}`;
       }
     }
@@ -265,10 +336,10 @@ export async function GET(
     if (r.payment) {
       voucherNumber = r.payment.receiptNumber;
       sourceId = r.payment.id;
-      status = r.payment.status === 'REVERSED' ? 'Reversed' : 'Completed';
-      if (vType2 === 'PAYMENT') {
+      status = r.payment.status === "REVERSED" ? "Reversed" : "Completed";
+      if (vType2 === "PAYMENT") {
         particulars = `Payment Received — ${r.payment.receiptNumber}`;
-      } else if (vType2 === 'DEBIT_NOTE') {
+      } else if (vType2 === "DEBIT_NOTE") {
         particulars = `Payment Reversed — ${r.payment.receiptNumber}`;
       }
     }
@@ -293,18 +364,19 @@ export async function GET(
       id: `sale-${s.id}`,
       date: s.createdAt,
       particulars: `Sales Invoice — ${s.invoiceNumber}`,
-      voucherType: 'SALE',
+      voucherType: "SALE",
       voucherNumber: s.invoiceNumber,
       debitPaise: toPaise(s.grandTotal),
       creditPaise: 0,
       sourceId: s.id,
-      status: s.paymentStatus === 'PAID'
-        ? 'Paid'
-        : s.paymentStatus === 'PARTIALLY_PAID'
-          ? 'Partial'
-          : s.paymentStatus === 'OVERDUE'
-            ? 'Overdue'
-            : 'Unpaid',
+      status:
+        s.paymentStatus === "PAID"
+          ? "Paid"
+          : s.paymentStatus === "PARTIALLY_PAID"
+            ? "Partial"
+            : s.paymentStatus === "OVERDUE"
+              ? "Overdue"
+              : "Unpaid",
       sortKey: s.createdAt.toISOString() + s.id,
     });
   }
@@ -315,13 +387,29 @@ export async function GET(
       id: `payment-${p.id}`,
       date: p.paymentDate,
       particulars: `Payment Received — ${p.receiptNumber}`,
-      voucherType: 'PAYMENT',
+      voucherType: "PAYMENT",
       voucherNumber: p.receiptNumber,
       debitPaise: 0,
       creditPaise: toPaise(p.amount),
       sourceId: p.id,
-      status: p.status === 'REVERSED' ? 'Reversed' : 'Completed',
+      status: p.status === "REVERSED" ? "Reversed" : "Completed",
       sortKey: p.paymentDate.toISOString() + p.id,
+    });
+  }
+
+  for (const t of importedTransactions) {
+    const voucherType = mapImportedTransactionType(t.voucherType);
+    rawEntries.push({
+      id: `import-${t.id}`,
+      date: t.transactionDate,
+      particulars: t.particulars || `Imported ${t.voucherType}`,
+      voucherType,
+      voucherNumber: t.voucherNumber ?? "",
+      debitPaise: toPaise(t.debit),
+      creditPaise: toPaise(t.credit),
+      sourceId: t.id,
+      status: "Imported",
+      sortKey: t.transactionDate.toISOString() + t.id,
     });
   }
 
@@ -337,17 +425,17 @@ export async function GET(
   let runningPaise = openingPaise;
 
   // Prepend opening balance as the informational first row (excluded from totals)
-  const openingEntry: typeof rawEntries[0] = {
-    id: 'opening-balance',
+  const openingEntry: (typeof rawEntries)[0] = {
+    id: "opening-balance",
     date: customer.createdAt,
-    particulars: 'Opening Balance',
-    voucherType: 'OPENING_BALANCE',
-    voucherNumber: '',
+    particulars: "Opening Balance",
+    voucherType: "OPENING_BALANCE",
+    voucherNumber: "",
     debitPaise: openingPaise > 0 ? openingPaise : 0,
     creditPaise: openingPaise < 0 ? Math.abs(openingPaise) : 0,
     sourceId: customer.id,
-    status: 'Posted',
-    sortKey: '0000-00-00' + customer.id,
+    status: "Posted",
+    sortKey: "0000-00-00" + customer.id,
   };
 
   const allEntries = [openingEntry, ...rawEntries];
@@ -358,7 +446,7 @@ export async function GET(
   let totalCreditPaise = 0;
 
   const processedEntries: LedgerEntry[] = allEntries.map((entry) => {
-    if (entry.id === 'opening-balance') {
+    if (entry.id === "opening-balance") {
       // Reset running balance to opening (handles date-filter edge cases)
       runningPaise = openingPaise;
     } else {
@@ -366,7 +454,7 @@ export async function GET(
     }
 
     // Opening balance entry is informational only — excluded from totals
-    if (entry.id !== 'opening-balance') {
+    if (entry.id !== "opening-balance") {
       totalDebitPaise += entry.debitPaise;
       totalCreditPaise += entry.creditPaise;
     }
@@ -377,8 +465,8 @@ export async function GET(
       particulars: entry.particulars,
       voucherType: entry.voucherType,
       voucherNumber: entry.voucherNumber,
-      debit: entry.debitPaise > 0 ? fromPaise(entry.debitPaise) : '',
-      credit: entry.creditPaise > 0 ? fromPaise(entry.creditPaise) : '',
+      debit: entry.debitPaise > 0 ? fromPaise(entry.debitPaise) : "",
+      credit: entry.creditPaise > 0 ? fromPaise(entry.creditPaise) : "",
       runningBalance: fromPaise(Math.abs(runningPaise)),
       balanceLabel: balanceLabel(runningPaise),
       sourceId: entry.sourceId,
@@ -397,7 +485,10 @@ export async function GET(
   // 13. Paginate
   const totalEntries = filteredEntries.length;
   const totalPages = Math.ceil(totalEntries / limit);
-  const paginatedEntries = filteredEntries.slice((page - 1) * limit, page * limit);
+  const paginatedEntries = filteredEntries.slice(
+    (page - 1) * limit,
+    page * limit,
+  );
 
   // 14. Summary — transactionDebit and transactionCredit reflect actual transactions only
   const summary = {
