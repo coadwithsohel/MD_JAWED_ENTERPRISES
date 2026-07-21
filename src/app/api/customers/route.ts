@@ -1,24 +1,26 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { prisma } from '@/lib/prisma';
-import { requireAuth } from '@/lib/auth';
-import { normalizePhone, isValidIndianMobile } from '@/lib/utils';
-import { generateCustomerCode } from '@/lib/counters';
-import { Prisma } from '@prisma/client';
-import { toPaise } from '@/lib/money';
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/auth";
+import { normalizePhone, isValidIndianMobile } from "@/lib/utils";
+import { generateCustomerCode } from "@/lib/counters";
+import { Prisma } from "@prisma/client";
+import { toPaise } from "@/lib/money";
 
 const CreateCustomerSchema = z.object({
-  fullName: z.string().min(2, 'Name must be at least 2 characters'),
-  mobile: z.string().refine((v) => isValidIndianMobile(v), 'Invalid Indian mobile number'),
+  fullName: z.string().min(2, "Name must be at least 2 characters"),
+  mobile: z
+    .string()
+    .refine((v) => isValidIndianMobile(v), "Invalid Indian mobile number"),
   alternateMobile: z.string().optional().nullable(),
-  email: z.string().email().optional().nullable().or(z.literal('')),
+  email: z.string().email().optional().nullable().or(z.literal("")),
   address: z.string().optional().nullable(),
   city: z.string().optional().nullable(),
   state: z.string().optional().nullable(),
   pinCode: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
-  creditLimit: z.number().min(0).default(0),
-  openingBalance: z.number().min(0).default(0),
+  creditLimit: z.number().finite().min(0).default(0),
+  openingBalance: z.number().finite().default(0),
 });
 
 export async function GET(req: NextRequest) {
@@ -26,41 +28,41 @@ export async function GET(req: NextRequest) {
   if (error) return error;
 
   const url = req.nextUrl;
-  const search = url.searchParams.get('search') ?? '';
-  const page = parseInt(url.searchParams.get('page') ?? '1');
-  const limit = parseInt(url.searchParams.get('limit') ?? '50');
+  const search = url.searchParams.get("search") ?? "";
+  const page = parseInt(url.searchParams.get("page") ?? "1");
+  const limit = parseInt(url.searchParams.get("limit") ?? "50");
   const skip = (page - 1) * limit;
 
   // Status filter: 'active' (default) | 'inactive' | 'all'
-  const statusFilter = url.searchParams.get('status') ?? 'active';
+  const statusFilter = url.searchParams.get("status") ?? "active";
 
   // Credit status filter: 'exceeded' | 'near' | 'outstanding' | 'advance'
-  const creditFilter = url.searchParams.get('creditStatus') ?? '';
+  const creditFilter = url.searchParams.get("creditStatus") ?? "";
 
   // Build base where clause
   const where: Prisma.CustomerWhereInput = {};
 
   // Status filtering
-  if (statusFilter === 'active') {
+  if (statusFilter === "active") {
     where.isActive = true;
-  } else if (statusFilter === 'inactive') {
+  } else if (statusFilter === "inactive") {
     where.isActive = false;
   }
   // 'all' = no filter on isActive
 
   // Credit status filtering
-  if (creditFilter === 'outstanding') {
+  if (creditFilter === "outstanding") {
     // currentBalance > 0 means customer owes us
     where.currentBalance = { gt: 0 };
-  } else if (creditFilter === 'advance') {
+  } else if (creditFilter === "advance") {
     // currentBalance < 0 means customer has advance/credit balance
     where.currentBalance = { lt: 0 };
-  } else if (creditFilter === 'exceeded') {
+  } else if (creditFilter === "exceeded") {
     // creditLimit > 0 AND currentBalance > creditLimit
     where.creditLimit = { gt: 0 };
     where.currentBalance = { gt: 0 };
     // Post-filter in JS since Prisma doesn't support field-to-field comparison directly
-  } else if (creditFilter === 'near') {
+  } else if (creditFilter === "near") {
     where.creditLimit = { gt: 0 };
     where.currentBalance = { gt: 0 };
   }
@@ -68,17 +70,17 @@ export async function GET(req: NextRequest) {
   // Search
   if (search) {
     where.OR = [
-      { fullName: { contains: search, mode: 'insensitive' } },
+      { fullName: { contains: search, mode: "insensitive" } },
       { mobile: { contains: search } },
-      { customerCode: { contains: search, mode: 'insensitive' } },
-      { city: { contains: search, mode: 'insensitive' } },
+      { customerCode: { contains: search, mode: "insensitive" } },
+      { city: { contains: search, mode: "insensitive" } },
     ];
   }
 
   const [customers, total] = await Promise.all([
     prisma.customer.findMany({
       where,
-      orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
+      orderBy: [{ isActive: "desc" }, { createdAt: "desc" }],
       skip,
       take: limit,
       select: {
@@ -109,13 +111,13 @@ export async function GET(req: NextRequest) {
 
   // Post-filter for exceeded/near (field-to-field comparison not natively supported)
   let filteredCustomers = customers;
-  if (creditFilter === 'exceeded') {
+  if (creditFilter === "exceeded") {
     filteredCustomers = customers.filter((c) => {
       const limit = toPaise(c.creditLimit);
       const balance = toPaise(c.currentBalance);
       return limit > 0 && balance > limit;
     });
-  } else if (creditFilter === 'near') {
+  } else if (creditFilter === "near") {
     filteredCustomers = customers.filter((c) => {
       const limitPaise = toPaise(c.creditLimit);
       const balance = toPaise(c.currentBalance);
@@ -127,7 +129,10 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     customers: filteredCustomers,
-    total: creditFilter === 'exceeded' || creditFilter === 'near' ? filteredCustomers.length : total,
+    total:
+      creditFilter === "exceeded" || creditFilter === "near"
+        ? filteredCustomers.length
+        : total,
     page,
     pages: Math.ceil(total / limit),
   });
@@ -141,7 +146,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = CreateCustomerSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+      return NextResponse.json(
+        { error: parsed.error.issues[0].message },
+        { status: 400 },
+      );
     }
 
     const data = parsed.data;
@@ -153,8 +161,10 @@ export async function POST(req: NextRequest) {
     });
     if (existing) {
       return NextResponse.json(
-        { error: `A customer with mobile ${data.mobile} already exists (${existing.customerCode} — ${existing.fullName})` },
-        { status: 409 }
+        {
+          error: `A customer with mobile ${data.mobile} already exists (${existing.customerCode} — ${existing.fullName})`,
+        },
+        { status: 409 },
       );
     }
 
@@ -181,26 +191,17 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Create opening balance ledger if non-zero
-      if (data.openingBalance > 0) {
-        await tx.creditLedger.create({
-          data: {
-            customerId: newCustomer.id,
-            transactionType: 'OPENING_BALANCE',
-            amount: data.openingBalance,
-            balanceAfter: data.openingBalance,
-            description: 'Opening balance',
-          },
-        });
-      }
-
       await tx.auditLog.create({
         data: {
           userId: auth.userId,
-          action: 'CREATE',
-          entityType: 'Customer',
+          action: "CREATE",
+          entityType: "Customer",
           entityId: newCustomer.id,
-          newData: { customerCode, fullName: data.fullName, mobile: data.mobile },
+          newData: {
+            customerCode,
+            fullName: data.fullName,
+            mobile: data.mobile,
+          },
         },
       });
 
@@ -209,7 +210,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ customer }, { status: 201 });
   } catch (err) {
-    console.error('[POST /api/customers]', err);
-    return NextResponse.json({ error: 'Server error' }, { status: 500 });
+    console.error("[POST /api/customers]", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

@@ -8,6 +8,7 @@ import {
   validateTransactionCsvHeaders,
   validateVouchers,
 } from "@/lib/tally-xml-parser";
+import { Prisma } from "@prisma/client";
 
 export async function POST(req: NextRequest) {
   const { auth, error } = await requireAuth(req);
@@ -127,25 +128,28 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await prisma.tallyVoucher.createMany({
-      data: valid.map((voucher) => ({
-        importBatchId: batch.id,
-        customerName: voucher.customerName,
-        voucherDate: new Date(voucher.voucherDate),
-        voucherType: voucher.voucherType,
-        voucherNumber: voucher.voucherNumber || null,
-        debit: voucher.debit || 0,
-        credit: voucher.credit || 0,
-        narration: voucher.narration || null,
-        reference: voucher.reference || null,
-        tallyGuid: voucher.tallyGuid || null,
-        tallyRemoteId: voucher.tallyRemoteId || null,
-        tallyMasterId: voucher.tallyMasterId || null,
-        voucherKey: voucher.voucherKey || null,
-        sourceFileName: voucher.sourceFileName || sourceFileName,
-        importStatus: "VALID",
-      })),
-    });
+    const rows = valid.map((voucher) => ({
+      importBatchId: batch.id,
+      customerName: voucher.customerName,
+      mobile: voucher.mobile || null,
+      matchedCustomerId: null,
+      matchedCustomerName: null,
+      voucherDate: new Date(`${voucher.voucherDate}T00:00:00.000Z`),
+      voucherType: voucher.voucherType,
+      voucherNumber: voucher.voucherNumber || null,
+      debit: voucher.debit || 0,
+      credit: voucher.credit || 0,
+      narration: voucher.narration || null,
+      reference: voucher.reference || null,
+      tallyGuid: voucher.tallyGuid || null,
+      tallyRemoteId: voucher.tallyRemoteId || null,
+      tallyMasterId: voucher.tallyMasterId || null,
+      voucherKey: voucher.voucherKey || null,
+      sourceFileName: voucher.sourceFileName || sourceFileName,
+      importStatus: "PARSED" as Prisma.ImportRowStatus,
+    }));
+
+    await prisma.tallyVoucher.createMany({ data: rows });
 
     console.info("[tally/upload] uploaded", {
       fileName: sourceFileName,
@@ -168,6 +172,10 @@ export async function POST(req: NextRequest) {
       duplicateRows: 0,
       totalVouchers: valid.length,
       invalidCount: invalid.length,
+      dateRange: {
+        from: valid[0]?.voucherDate ?? null,
+        to: valid[valid.length - 1]?.voucherDate ?? null,
+      },
     });
   } catch (err) {
     console.error("Transaction import failed", {

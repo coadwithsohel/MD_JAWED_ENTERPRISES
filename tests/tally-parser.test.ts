@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseTallyCsv, validateVouchers } from "../src/lib/tally-xml-parser";
+import { parseSignedAmount } from "../src/lib/money";
 
 test("parseTallyCsv normalizes customer, date, and amounts", () => {
   const csv = [
@@ -53,6 +54,13 @@ test("parseTallyCsv handles UTF-8 BOM and whitespace-padded headers", () => {
   assert.equal(vouchers[0].customerName, "Ahamad Khan");
   assert.equal(vouchers[0].voucherType, "SALES");
   assert.equal(vouchers[0].debit, 5000);
+});
+
+test("parseSignedAmount preserves negative values", () => {
+  assert.equal(parseSignedAmount("-500"), -500);
+  assert.equal(parseSignedAmount("1000"), 1000);
+  assert.equal(parseSignedAmount("0"), 0);
+  assert.equal(parseSignedAmount("₹1,200.50"), 1200.5);
 });
 
 test("validateVouchers counts totals and voucher categories", () => {
