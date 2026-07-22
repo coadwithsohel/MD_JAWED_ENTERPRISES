@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireRole } from "@/lib/auth";
-import { toPaise, fromPaise } from "@/lib/money";
+import { toPaise } from "@/lib/money";
 
 const schema = z
   .object({

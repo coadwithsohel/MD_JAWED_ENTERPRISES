@@ -367,10 +367,11 @@ export default function ImportPage() {
               </button>
               <button
                 onClick={handleImport}
-                disabled={validCount === 0}
+                disabled={validCount === 0 || importing}
                 className="px-4 py-1.5 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50 flex items-center gap-2"
               >
-                <Upload className="h-4 w-4" /> Import {validCount} Customers
+                {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {importing ? 'Importing...' : `Import ${validCount} Customers`}
               </button>
             </div>
           </div>

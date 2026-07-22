@@ -37,7 +37,7 @@ export async function generateCustomerCode(tx?: Parameters<Parameters<typeof pri
 /**
  * Generate a sequential receipt number.
  */
-export async function generateReceiptNumber(_tx?: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]): Promise<string> {
+export async function generateReceiptNumber(): Promise<string> {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2);
   const mm = String(now.getMonth() + 1).padStart(2, '0');

@@ -68,7 +68,7 @@ async function main() {
     ].join(' ');
 
     console.log('  Running pg_dump...');
-    execSync(cmd, { stdio: 'inherit', shell: true as any });
+    execSync(cmd, { stdio: 'inherit', shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh' });
     console.log(`\n  ✅ Backup created successfully: ${backupFile}`);
 
     const stats = fs.statSync(backupFile);

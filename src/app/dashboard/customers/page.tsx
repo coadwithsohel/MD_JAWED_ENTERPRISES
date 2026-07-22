@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Search, Plus, Loader2, X, UserPlus, Phone, MapPin,
-  Users, UserX, CreditCard, TrendingUp, TrendingDown,
+  Users, UserX, CreditCard,
   ChevronRight, CheckCircle,
 } from 'lucide-react';
 import CustomerActionMenu from '@/components/customers/CustomerActionMenu';
@@ -231,6 +231,12 @@ export default function CustomersPage() {
   // User info (for role-based UI)
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
 
+  // Manual refresh trigger
+  const [refreshKey, setRefreshKey] = useState(0);
+  function refreshCustomers() {
+    setRefreshKey((k) => k + 1);
+  }
+
   // Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastIdRef = useRef(0);
@@ -255,28 +261,51 @@ export default function CustomersPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Reset to page 1 on filter/search change
-  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, creditFilter]);
+  // Reset to page 1 on filter/search change - done in event handlers
+  // No separate useEffect needed
 
-  const fetchCustomers = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({
-        page: String(page),
-        limit: '24',
-        status: statusFilter,
-      });
-      if (debouncedSearch) params.set('search', debouncedSearch);
-      if (creditFilter) params.set('creditStatus', creditFilter);
-      const res = await fetch(`/api/customers?${params}`);
-      const data = await res.json();
-      setCustomers(data.customers ?? []);
-      setTotal(data.total ?? 0);
-    } catch { setCustomers([]); }
-    finally { setLoading(false); }
-  }, [page, debouncedSearch, statusFilter, creditFilter]);
+  useEffect(() => {
+    const controller = new AbortController();
 
-  useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
+    async function loadCustomers() {
+      try {
+        await Promise.resolve();
+        setLoading(true);
+
+        const params = new URLSearchParams({
+          page: String(page),
+          limit: '24',
+          status: statusFilter,
+        });
+        if (debouncedSearch) params.set('search', debouncedSearch);
+        if (creditFilter) params.set('creditStatus', creditFilter);
+
+        const res = await fetch(`/api/customers?${params}`, {
+          signal: controller.signal,
+        });
+        const data = await res.json();
+
+        if (!controller.signal.aborted) {
+          setCustomers(data.customers ?? []);
+          setTotal(data.total ?? 0);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setCustomers([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadCustomers();
+
+    return () => {
+      controller.abort();
+    };
+  }, [page, debouncedSearch, statusFilter, creditFilter, refreshKey]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -293,7 +322,7 @@ export default function CustomersPage() {
       setShowModal(false);
       setForm(initialForm);
       showToast('Customer added successfully.');
-      fetchCustomers();
+      refreshCustomers();
     } catch { setFormError('Network error. Please try again.'); }
     finally { setSaving(false); }
   };
@@ -311,7 +340,7 @@ export default function CustomersPage() {
   function onDialogSuccess(msg: string) {
     closeDialog();
     showToast(msg);
-    fetchCustomers();
+    refreshCustomers();
   }
 
   const PAGES = Math.ceil(total / 24);
@@ -452,7 +481,6 @@ export default function CustomersPage() {
           customerName={selectedCustomer.fullName}
           customerCode={selectedCustomer.customerCode}
           currentCreditLimit={selectedCustomer.creditLimit}
-          currentOutstanding={selectedCustomer.currentBalance}
           currentOutstandingRaw={Math.max(0, toPaise(selectedCustomer.currentBalance))}
           onSuccess={() => onDialogSuccess('Credit limit updated successfully.')}
           onClose={closeDialog}
@@ -501,7 +529,7 @@ export default function CustomersPage() {
           onSuccess={() => {
             closeDialog();
             showToast('Customer permanently deleted.');
-            fetchCustomers();
+            refreshCustomers();
           }}
           onClose={closeDialog}
         />

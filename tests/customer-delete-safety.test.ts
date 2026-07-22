@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getCustomerDeletionEligibility } from "../src/lib/customer-delete-safety.ts";
+import { getCustomerDeletionEligibility } from "../src/lib/customer-delete-safety";
 
 test("getCustomerDeletionEligibility blocks customers with ledger transactions or import references", () => {
   const eligibility = getCustomerDeletionEligibility({

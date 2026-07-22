@@ -31,13 +31,6 @@ function fromPaise(paise: number): string {
   }).format(rupees);
 }
 
-function formatNum(n: number): string {
-  return new Intl.NumberFormat('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n / 100);
-}
-
 export async function GET(req: NextRequest) {
   const { error } = await requireAuth(req);
   if (error) return error;
@@ -46,7 +39,7 @@ export async function GET(req: NextRequest) {
 
   try {
     // Build customer query
-    const where: any = {};
+    const where: { id?: string } = {};
     if (customerId) {
       where.id = customerId;
     }

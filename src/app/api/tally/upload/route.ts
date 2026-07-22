@@ -8,7 +8,7 @@ import {
   validateTransactionCsvHeaders,
   validateVouchers,
 } from "@/lib/tally-xml-parser";
-import { Prisma } from "@prisma/client";
+import { Prisma, $Enums } from "@prisma/client";
 
 export async function POST(req: NextRequest) {
   const { auth, error } = await requireAuth(req);
@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
       matchedCustomerId: null,
       matchedCustomerName: null,
       voucherDate: new Date(`${voucher.voucherDate}T00:00:00.000Z`),
-      voucherType: voucher.voucherType,
+      voucherType: voucher.voucherType as Prisma.TallyVoucherCreateManyInput["voucherType"],
       voucherNumber: voucher.voucherNumber || null,
       debit: voucher.debit || 0,
       credit: voucher.credit || 0,
@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
       tallyMasterId: voucher.tallyMasterId || null,
       voucherKey: voucher.voucherKey || null,
       sourceFileName: voucher.sourceFileName || sourceFileName,
-      importStatus: "PARSED" as Prisma.ImportRowStatus,
+      importStatus: "PARSED" as $Enums.ImportRowStatus,
     }));
 
     await prisma.tallyVoucher.createMany({ data: rows });

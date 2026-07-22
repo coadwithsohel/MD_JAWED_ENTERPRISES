@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       }
 
       // Create payment record
-      const receiptNumber = await generateReceiptNumber(tx);
+      const receiptNumber = await generateReceiptNumber();
       const payment = await tx.payment.create({
         data: {
           receiptNumber,

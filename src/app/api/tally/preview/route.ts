@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
-import { Prisma } from "@prisma/client";
+
 
 interface TallyVoucherInput {
   tallyGuid?: string;
@@ -43,7 +43,6 @@ export async function POST(req: NextRequest) {
         where: { importBatchId: batchId },
         select: {
           customerName: true,
-          mobile: true,
           voucherDate: true,
           voucherType: true,
           voucherNumber: true,
@@ -61,7 +60,6 @@ export async function POST(req: NextRequest) {
 
       vouchers = persistedVouchers.map((voucher) => ({
         customerName: voucher.customerName || "",
-        mobile: voucher.mobile || undefined,
         voucherDate: voucher.voucherDate.toISOString().slice(0, 10),
         voucherType: voucher.voucherType as TallyVoucherInput["voucherType"],
         voucherNumber: voucher.voucherNumber || undefined,

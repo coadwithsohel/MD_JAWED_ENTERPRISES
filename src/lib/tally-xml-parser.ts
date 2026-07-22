@@ -173,7 +173,7 @@ function parseVoucher(
   const partyAmount = partyEntry ? partyEntry.amount : 0;
 
   // Determine voucher type and debit/credit
-  const result = classifyVoucher(voucherTypeName, partyAmount, narration);
+  const result = classifyVoucher(voucherTypeName, partyAmount);
 
   if (!result) return null;
 
@@ -243,7 +243,6 @@ export function normalizeDate(dateStr: string): string | null {
 function classifyVoucher(
   typeName: string,
   partyAmount: number,
-  narration: string,
 ): {
   voucherType: TallyVoucherInput["voucherType"];
   debit: number;
