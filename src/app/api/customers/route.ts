@@ -19,11 +19,7 @@ const CreateCustomerSchema = z.object({
   state: z.string().optional().nullable(),
   pinCode: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
-<<<<<<< HEAD
-  creditLimit: z.number().min(0).default(0),
-=======
   creditLimit: z.number().finite().min(0).default(0),
->>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
   openingBalance: z.number().finite().default(0),
 });
 
@@ -195,22 +191,6 @@ export async function POST(req: NextRequest) {
         },
       });
 
-<<<<<<< HEAD
-      // Create opening balance ledger if non-zero
-      if (data.openingBalance !== 0) {
-        await tx.creditLedger.create({
-          data: {
-            customerId: newCustomer.id,
-            transactionType: 'OPENING_BALANCE',
-            amount: Math.abs(data.openingBalance),
-            balanceAfter: data.openingBalance,
-            description: 'Opening balance',
-          },
-        });
-      }
-
-=======
->>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
       await tx.auditLog.create({
         data: {
           userId: auth.userId,

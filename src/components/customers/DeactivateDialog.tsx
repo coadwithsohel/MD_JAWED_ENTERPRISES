@@ -7,7 +7,7 @@ import { fromPaise, toPaise } from '@/lib/money';
 interface CustomerStats {
   invoiceCount: number;
   paymentCount: number;
-  outstandingPaise: number; // positive = owes us, negative = advance
+  outstandingPaise: number;
 }
 
 interface Props {
@@ -39,13 +39,11 @@ export default function DeactivateDialog({
   const hasAdvance = stats.outstandingPaise < 0;
   const hasRecords = stats.invoiceCount > 0 || stats.paymentCount > 0;
 
-  // Trap focus
   useEffect(() => {
     const el = document.getElementById('deactivate-reason');
     el?.focus();
   }, []);
 
-  // Close on Escape
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape' && !saving) {
@@ -95,7 +93,6 @@ export default function DeactivateDialog({
       aria-describedby="deactivate-dialog-desc"
     >
       <div className="flex max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-lg flex-col rounded-xl border border-slate-200 bg-white shadow-xl sm:w-full overflow-hidden">
-        {/* Header - sticky */}
         <header className="shrink-0 flex items-center justify-between px-4 sm:px-6 py-4 border-b border-amber-100 bg-amber-50">
           <div className="flex items-center gap-3 min-w-0">
             <div className="h-10 w-10 bg-amber-100 border border-amber-200 rounded-xl flex items-center justify-center shrink-0">
@@ -118,9 +115,7 @@ export default function DeactivateDialog({
           </button>
         </header>
 
-        {/* Scrollable middle content */}
         <div className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-4">
-          {/* Customer info */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
             <p className="text-sm font-semibold text-slate-800 break-words">{customerName}</p>
             <p className="text-xs text-slate-500">{mobile}</p>
@@ -150,57 +145,39 @@ export default function DeactivateDialog({
             </div>
           </div>
 
-          {/* Outstanding balance warning */}
           {hasOutstanding && (
             <div className="flex items-start gap-3 bg-rose-50 border border-rose-200 rounded-xl p-3 text-sm text-rose-800">
               <AlertCircle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" aria-hidden="true" />
               <p className="break-words whitespace-normal">
                 This customer has an outstanding balance of <strong>{fromPaise(stats.outstandingPaise)}</strong>.
-                Their financial records must be preserved.
-                You can deactivate the customer, but permanent deletion is not allowed while this balance exists.
               </p>
             </div>
           )}
 
-          {/* Advance balance warning */}
           {hasAdvance && (
             <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
               <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" aria-hidden="true" />
               <p className="break-words whitespace-normal">
                 This customer has an advance/credit balance of <strong>{fromPaise(Math.abs(stats.outstandingPaise))}</strong>.
-                Consider refunding or adjusting before deactivating.
               </p>
             </div>
           )}
 
-          {/* Info: records preserved */}
           {hasRecords && (
             <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700">
               <AlertCircle className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" aria-hidden="true" />
               <p className="break-words whitespace-normal">
                 All {stats.invoiceCount > 0 ? `${stats.invoiceCount} invoice(s)` : ''}{stats.invoiceCount > 0 && stats.paymentCount > 0 ? ' and ' : ''}{stats.paymentCount > 0 ? `${stats.paymentCount} payment(s)` : ''} will be preserved.
-                The customer will be hidden from active lists but will remain visible in historical records and ledgers.
               </p>
             </div>
           )}
 
-          {/* Warning: will be hidden */}
-          <div className="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600">
-            <AlertTriangle className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" aria-hidden="true" />
-            <p className="break-words whitespace-normal">
-              The customer will be hidden from the active customer list and cannot be selected when creating new invoices
-              until reactivated.
-            </p>
-          </div>
-
-          {/* Error */}
           {error && (
             <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-4 py-3 text-sm" role="alert" aria-live="assertive">
               {error}
             </div>
           )}
 
-          {/* Reason field */}
           <div>
             <label htmlFor="deactivate-reason" className="block text-sm font-medium text-slate-700 mb-1.5">
               Reason <span className="text-slate-400 font-normal">(optional)</span>
@@ -218,7 +195,6 @@ export default function DeactivateDialog({
           </div>
         </div>
 
-        {/* Footer - sticky */}
         <footer className="shrink-0 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end px-4 sm:px-6 py-4 border-t border-slate-100">
           <button
             type="button"
@@ -244,20 +220,12 @@ export default function DeactivateDialog({
   );
 }
 
-/** Convenience hook: fetch customer stats for the dialog */
 export function useCustomerStats(customerId: string | null) {
   const [stats, setStats] = useState<CustomerStats | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!customerId) return;
-<<<<<<< HEAD
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoading(true);
-    fetch(`/api/customers/${customerId}`)
-      .then((r) => r.json())
-      .then((data) => {
-=======
 
     const controller = new AbortController();
 
@@ -270,7 +238,6 @@ export function useCustomerStats(customerId: string | null) {
           signal: controller.signal,
         });
         const data = await res.json();
->>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
         const c = data.customer;
 
         if (!controller.signal.aborted && c) {

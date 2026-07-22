@@ -132,17 +132,10 @@ function parseExcelFile(text: string): PreviewRow[] {
       city: obj.city?.trim(),
       state: obj.state?.trim(),
       address: obj.address?.trim(),
-<<<<<<< HEAD
-      creditLimit: obj.creditLimit?.replace(/[^0-9.]/g, ''),
-      openingBalance: obj.openingBalance?.replace(/[^0-9.-]/g, ''),
-      status: errors.length ? 'error' : 'valid',
-      error: errors.join('; '),
-=======
       creditLimit: obj.creditLimit ? String(creditLimit) : "0",
       openingBalance: obj.openingBalance ? String(openingBalance) : "0",
       status: errors.length ? "error" : "valid",
       error: errors.join("; "),
->>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
     };
   });
 }
@@ -150,12 +143,8 @@ function parseExcelFile(text: string): PreviewRow[] {
 export default function ImportPage() {
   const [step, setStep] = useState<Step>("upload");
   const [rows, setRows] = useState<PreviewRow[]>([]);
-<<<<<<< HEAD
-  const [fileName, setFileName] = useState('');
-=======
   const [fileName, setFileName] = useState("");
   const [importing, setImporting] = useState(false);
->>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -188,11 +177,6 @@ export default function ImportPage() {
   };
 
   const handleImport = async () => {
-<<<<<<< HEAD
-    const validRows = rows.filter((r) => r.status === 'valid');
-    if (!validRows.length) { setError('No valid rows to import'); return; }
-    setStep('importing');
-=======
     const validRows = rows.filter((r) => r.status === "valid");
     if (!validRows.length) {
       setError("No valid rows to import");
@@ -200,7 +184,6 @@ export default function ImportPage() {
     }
     setImporting(true);
     setStep("importing");
->>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
 
     let created = 0,
       skipped = 0,
@@ -243,12 +226,8 @@ export default function ImportPage() {
     }
 
     setResult({ created, skipped, failed, errors });
-<<<<<<< HEAD
-    setStep('done');
-=======
     setStep("done");
     setImporting(false);
->>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
   };
 
   const handleDownloadTemplate = () => {

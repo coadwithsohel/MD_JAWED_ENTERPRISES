@@ -15,8 +15,6 @@ import RestoreDialog from '@/components/customers/RestoreDialog';
 import PermanentDeleteDialog from '@/components/customers/PermanentDeleteDialog';
 import { toPaise, fromPaise, getCreditStatus, CREDIT_STATUS_LABELS, CREDIT_STATUS_COLORS } from '@/lib/money';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface Customer {
   id: string; customerCode: string; fullName: string; mobile: string;
   alternateMobile?: string; email?: string; address?: string; city?: string;
@@ -34,8 +32,6 @@ const initialForm = {
 
 type StatusFilter = 'active' | 'inactive' | 'all';
 type CreditFilter = '' | 'exceeded' | 'near' | 'outstanding' | 'advance';
-
-// ─── Toast ────────────────────────────────────────────────────────────────────
 
 interface Toast { id: number; message: string; type: 'success' | 'error'; }
 
@@ -67,8 +63,6 @@ function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id
   );
 }
 
-// ─── Filter tabs ─────────────────────────────────────────────────────────────
-
 const STATUS_TABS: { value: StatusFilter; label: string; icon: React.ElementType }[] = [
   { value: 'active', label: 'Active', icon: Users },
   { value: 'inactive', label: 'Inactive', icon: UserX },
@@ -82,8 +76,6 @@ const CREDIT_FILTERS: { value: CreditFilter; label: string }[] = [
   { value: 'outstanding', label: 'Has Outstanding' },
   { value: 'advance', label: 'Has Advance' },
 ];
-
-// ─── CustomerCard ─────────────────────────────────────────────────────────────
 
 function CustomerCard({
   c,
@@ -115,7 +107,6 @@ function CustomerCard({
     <div className={`group bg-white border rounded-xl p-5 hover:shadow-md transition-all relative ${
       c.isActive ? 'border-slate-200 hover:border-slate-300' : 'border-slate-200 opacity-75'
     }`}>
-      {/* Action menu — positioned top-right */}
       <div className="absolute top-3 right-3 z-10">
         <CustomerActionMenu
           customerId={c.id}
@@ -132,7 +123,6 @@ function CustomerCard({
         />
       </div>
 
-      {/* Card content — link to ledger */}
       <Link
         href={`/dashboard/customers/${c.id}`}
         className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 rounded-lg"
@@ -140,7 +130,6 @@ function CustomerCard({
       >
         <div className="flex items-start gap-3 pr-8">
           <div className="flex-1 min-w-0">
-            {/* Code + status badges */}
             <div className="flex items-center gap-2 flex-wrap mb-1.5">
               <span className="font-mono text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded font-medium border border-blue-100">
                 {c.customerCode}
@@ -173,7 +162,6 @@ function CustomerCard({
             )}
           </div>
 
-          {/* Balance column */}
           <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
             {isDebit ? (
               <>
@@ -206,8 +194,6 @@ function CustomerCard({
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
-
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -218,26 +204,21 @@ export default function CustomersPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
   const [creditFilter, setCreditFilter] = useState<CreditFilter>('');
 
-  // Add customer modal
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(initialForm);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // Dialog state
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [dialog, setDialog] = useState<'credit' | 'deactivate' | 'restore' | 'permDelete' | null>(null);
 
-  // User info (for role-based UI)
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
 
-  // Manual refresh trigger
   const [refreshKey, setRefreshKey] = useState(0);
   function refreshCustomers() {
     setRefreshKey((k) => k + 1);
   }
 
-  // Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastIdRef = useRef(0);
 
@@ -247,7 +228,6 @@ export default function CustomersPage() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
   }
 
-  // Fetch current user role
   useEffect(() => {
     fetch('/api/auth/me')
       .then((r) => r.json())
@@ -255,30 +235,16 @@ export default function CustomersPage() {
       .catch(() => {});
   }, []);
 
-  // Debounce search
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(t);
   }, [search]);
 
-<<<<<<< HEAD
-  // Reset to page 1 on filter/search change
-  // Reset pagination whenever search/filter inputs change.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, creditFilter]);
-=======
-  // Reset to page 1 on filter/search change - done in event handlers
-  // No separate useEffect needed
->>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
+  // Reset page when filters change - done in event handlers via setPage(1)
 
   useEffect(() => {
     const controller = new AbortController();
 
-<<<<<<< HEAD
-  // Data fetching intentionally updates local request state.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void fetchCustomers(); }, [fetchCustomers]);
-=======
     async function loadCustomers() {
       try {
         await Promise.resolve();
@@ -318,7 +284,6 @@ export default function CustomersPage() {
       controller.abort();
     };
   }, [page, debouncedSearch, statusFilter, creditFilter, refreshKey]);
->>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -362,7 +327,6 @@ export default function CustomersPage() {
     <div className="space-y-6">
       <ToastContainer toasts={toasts} onDismiss={(id) => setToasts((p) => p.filter((t) => t.id !== id))} />
 
-      {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Customers</h1>
@@ -376,7 +340,6 @@ export default function CustomersPage() {
         </button>
       </div>
 
-      {/* Status Tabs */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
         <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
           {STATUS_TABS.map((tab) => {
@@ -384,7 +347,7 @@ export default function CustomersPage() {
             return (
               <button
                 key={tab.value}
-                onClick={() => setStatusFilter(tab.value)}
+                onClick={() => { setStatusFilter(tab.value); setPage(1); }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                   statusFilter === tab.value
                     ? 'bg-white text-blue-700 shadow-sm border border-slate-200'
@@ -398,10 +361,9 @@ export default function CustomersPage() {
           })}
         </div>
 
-        {/* Credit filter dropdown */}
         <select
           value={creditFilter}
-          onChange={(e) => setCreditFilter(e.target.value as CreditFilter)}
+          onChange={(e) => { setCreditFilter(e.target.value as CreditFilter); setPage(1); }}
           className="px-3 py-1.5 text-sm border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 bg-white text-slate-700"
           aria-label="Filter by credit status"
         >
@@ -410,7 +372,6 @@ export default function CustomersPage() {
           ))}
         </select>
 
-        {/* Inline credit status legend */}
         {creditFilter && (
           <div className="flex items-center gap-1.5">
             <CreditCard className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
@@ -421,7 +382,6 @@ export default function CustomersPage() {
         )}
       </div>
 
-      {/* Search */}
       <div className="relative max-w-sm">
         <Search className="absolute inset-y-0 left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
         <input
@@ -431,13 +391,12 @@ export default function CustomersPage() {
           aria-label="Search customers"
         />
         {search && (
-          <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" aria-label="Clear search">
+          <button onClick={() => { setSearch(''); setDebouncedSearch(''); setPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" aria-label="Clear search">
             <X className="h-4 w-4" />
           </button>
         )}
       </div>
 
-      {/* Inactive banner */}
       {statusFilter === 'inactive' && (
         <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-700">
           <UserX className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -486,8 +445,6 @@ export default function CustomersPage() {
         </>
       )}
 
-      {/* ── Dialogs ─────────────────────────────────────────────────────── */}
-
       {dialog === 'credit' && selectedCustomer && (
         <ChangeCreditLimitDialog
           customerId={selectedCustomer.id}
@@ -534,7 +491,7 @@ export default function CustomersPage() {
           safetyCounts={{
             invoiceCount: selectedCustomer._count?.sales ?? 0,
             paymentCount: selectedCustomer._count?.payments ?? 0,
-            ledgerCount: 0, // fetched server-side during actual delete attempt
+            ledgerCount: 0,
             reminderCount: 0,
             hasOutstanding: toPaise(selectedCustomer.currentBalance) !== 0,
             outstandingLabel: fromPaise(Math.abs(toPaise(selectedCustomer.currentBalance))),
@@ -548,7 +505,6 @@ export default function CustomersPage() {
         />
       )}
 
-      {/* ── Add Customer Modal ───────────────────────────────────────────── */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto">

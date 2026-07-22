@@ -756,13 +756,8 @@ export default function CustomerLedgerPage() {
 
   const customer = data?.customer;
   const summary = data?.summary;
-<<<<<<< HEAD
-
-=======
->>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
   const addressParts = [customer?.address, customer?.city, customer?.state, customer?.pinCode].filter(Boolean);
   const fullAddress = addressParts.join(', ');
-  // Narrowed references used inside the {data && (...)} block
   const cust = data?.customer as CustomerInfo;
   const summ = data?.summary as LedgerSummary;
   const pag = data?.pagination as LedgerResponse['pagination'];
