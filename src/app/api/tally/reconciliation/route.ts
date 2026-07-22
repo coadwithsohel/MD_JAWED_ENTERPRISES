@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import type { Prisma } from '@prisma/client';
 import { requireAuth } from '@/lib/auth';
 
 /**
@@ -31,12 +32,6 @@ function fromPaise(paise: number): string {
   }).format(rupees);
 }
 
-function formatNum(n: number): string {
-  return new Intl.NumberFormat('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n / 100);
-}
 
 export async function GET(req: NextRequest) {
   const { error } = await requireAuth(req);
@@ -46,7 +41,7 @@ export async function GET(req: NextRequest) {
 
   try {
     // Build customer query
-    const where: any = {};
+    const where: Prisma.CustomerWhereInput = {};
     if (customerId) {
       where.id = customerId;
     }

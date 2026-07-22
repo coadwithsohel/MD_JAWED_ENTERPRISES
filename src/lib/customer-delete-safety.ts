@@ -29,11 +29,10 @@ export function getCustomerDeletionEligibility(
   if (customer._count.ledgers > 0) reasons.push("ledgerEntries");
   if (customer._count.ledgerTransactions > 0)
     reasons.push("ledgerTransactions");
-  if (
-    customer._count.reminders > 0 ||
-    customer._count.importRows > 0 ||
-    customer._count.tallyVouchers > 0
-  ) {
+  // Import rows and staged Tally vouchers are audit metadata, not financial
+  // history. They are detached before permanent deletion and must not block an
+  // otherwise empty customer. Reminders are operational references and do block.
+  if (customer._count.reminders > 0) {
     reasons.push("otherReferences");
   }
 

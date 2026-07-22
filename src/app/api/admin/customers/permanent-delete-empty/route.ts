@@ -122,30 +122,71 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const deletedIds = [] as string[];
-    await prisma.$transaction(async (tx) => {
-      for (const customerId of eligibleIds) {
-        await tx.auditLog.create({
-          data: {
-            userId: auth.userId,
-            action: "CUSTOMER_BULK_PERMANENT_DELETED",
-            entityType: "Customer",
-            entityId: customerId,
-            oldData: { reason: reason ?? undefined },
-            newData: { deletedBy: auth.userId, mode: "execute" },
-          },
+    const deletedIds: string[] = [];
+    const failedIds: string[] = [];
+    const CHUNK_SIZE = 50;
+
+    for (let index = 0; index < eligibleIds.length; index += CHUNK_SIZE) {
+      const chunk = eligibleIds.slice(index, index + CHUNK_SIZE);
+      try {
+        const chunkDeleted = await prisma.$transaction(async (tx) => {
+          // Import records are audit metadata. Preserve them but detach the
+          // nullable customer reference before deleting the customer.
+          await tx.customerImportRow.updateMany({
+            where: { customerId: { in: chunk } },
+            data: { customerId: null },
+          });
+          await tx.tallyVoucher.updateMany({
+            where: { customerId: { in: chunk } },
+            data: { customerId: null },
+          });
+
+          for (const customerId of chunk) {
+            await tx.auditLog.create({
+              data: {
+                userId: auth.userId,
+                action: "CUSTOMER_BULK_PERMANENT_DELETED",
+                entityType: "Customer",
+                entityId: customerId,
+                oldData: { reason: reason ?? undefined },
+                newData: { deletedBy: auth.userId, mode: "execute" },
+              },
+            });
+          }
+
+          const result = await tx.customer.deleteMany({
+            where: { id: { in: chunk } },
+          });
+          return result.count;
         });
 
-        await tx.customer.delete({ where: { id: customerId } });
-        deletedIds.push(customerId);
+        if (chunkDeleted === chunk.length) deletedIds.push(...chunk);
+        else failedIds.push(...chunk);
+      } catch (chunkError) {
+        failedIds.push(...chunk);
+        console.error("[permanent-delete-empty] chunk failed", {
+          chunkStart: index,
+          chunkSize: chunk.length,
+          code:
+            typeof chunkError === "object" &&
+            chunkError !== null &&
+            "code" in chunkError
+              ? String((chunkError as { code?: unknown }).code)
+              : undefined,
+          message:
+            chunkError instanceof Error
+              ? chunkError.message
+              : "Unknown deletion error",
+        });
       }
-    });
+    }
 
     return NextResponse.json({
       ok: true,
       mode: "execute",
       deletedCount: deletedIds.length,
       skippedCount: customers.length - deletedIds.length,
+      failedCount: failedIds.length,
       summary,
       message: "Eligible empty customers were permanently deleted.",
     });

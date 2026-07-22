@@ -251,6 +251,7 @@ export function useCustomerStats(customerId: string | null) {
 
   useEffect(() => {
     if (!customerId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     fetch(`/api/customers/${customerId}`)
       .then((r) => r.json())

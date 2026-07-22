@@ -715,7 +715,6 @@ export default function CustomerLedgerPage() {
 
   const customer = data?.customer;
   const summary = data?.summary;
-  const pagination = data?.pagination;
 
   const addressParts = [customer?.address, customer?.city, customer?.state, customer?.pinCode].filter(Boolean);
   const fullAddress = addressParts.join(', ');
@@ -766,9 +765,8 @@ export default function CustomerLedgerPage() {
           customerName={cust.fullName}
           customerCode={cust.customerCode}
           currentCreditLimit={cust.creditLimit ?? '0'}
-          currentOutstanding={summ?.closingBalance ?? '0'}
           currentOutstandingRaw={Math.max(0, toPaise(cust.currentBalance ?? summ?.closingBalance?.replace(/[₹,\s]/g, '') ?? '0'))}
-          onSuccess={(newLimit) => {
+          onSuccess={() => {
             setDialog(null);
             showToast('Credit limit updated successfully.');
             fetchLedger();

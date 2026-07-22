@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
     if (sourceKeys.length > 0) {
       const existing = await prisma.tallyVoucher.findMany({
         where: {
+          importBatchId: batchId ? { not: batchId } : undefined,
           OR: [
             { voucherKey: { in: sourceKeys } },
             {

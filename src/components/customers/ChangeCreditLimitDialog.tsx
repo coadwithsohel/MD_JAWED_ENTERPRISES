@@ -9,7 +9,6 @@ interface Props {
   customerName: string;
   customerCode: string;
   currentCreditLimit: string; // formatted INR string OR numeric string
-  currentOutstanding: string; // formatted INR string OR numeric string
   currentOutstandingRaw: number; // raw paise
   onSuccess: (newLimit: string) => void;
   onClose: () => void;
@@ -20,7 +19,6 @@ export default function ChangeCreditLimitDialog({
   customerName,
   customerCode,
   currentCreditLimit,
-  currentOutstanding,
   currentOutstandingRaw,
   onSuccess,
   onClose,

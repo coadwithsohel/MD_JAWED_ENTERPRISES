@@ -14,6 +14,7 @@ import { LedgerTransactionType, Prisma } from "@prisma/client";
  */
 
 interface TallyVoucherInput {
+  stagedId?: string;
   tallyGuid?: string;
   tallyRemoteId?: string;
   tallyMasterId?: string;
@@ -89,6 +90,7 @@ async function importVouchers(
   if (guidVouchers.length > 0) {
     const existing = await prisma.tallyVoucher.findMany({
       where: {
+        importBatchId: { not: batchId },
         OR: [
           {
             voucherKey: {
@@ -262,28 +264,42 @@ async function importVouchers(
           data: { currentBalance: newBalance },
         });
 
-        // Create TallyVoucher record
-        const tallyVoucher = await tx.tallyVoucher.create({
-          data: {
-            importBatchId: batchId,
-            tallyGuid: v.tallyGuid || null,
-            tallyRemoteId: v.tallyRemoteId || null,
-            tallyMasterId: v.tallyMasterId || null,
-            voucherKey: v.voucherKey || null,
-            sourceFileName: v.sourceFileName || null,
-            customerName: v.customerName,
-            customerId,
-            voucherDate: d,
-            voucherType: v.voucherType,
-            voucherNumber: v.voucherNumber || null,
-            debit: isDebit ? amount : 0,
-            credit: isDebit ? 0 : amount,
-            narration: v.narration || null,
-            reference: v.reference || null,
-            importStatus: "CREATED",
-            ledgerEntryId: ledgerEntry.id,
-          },
-        });
+        // Promote the staged voucher to an imported record instead of creating
+        // a second copy. This prevents a staged row from being treated as its
+        // own duplicate and keeps preview/import counts consistent.
+        const tallyVoucher = v.stagedId
+          ? await tx.tallyVoucher.update({
+              where: { id: v.stagedId },
+              data: {
+                customerId,
+                importStatus: "CREATED",
+                ledgerEntryId: ledgerEntry.id,
+                isDuplicate: false,
+                isSkipped: false,
+                errorMessage: null,
+              },
+            })
+          : await tx.tallyVoucher.create({
+              data: {
+                importBatchId: batchId,
+                tallyGuid: v.tallyGuid || null,
+                tallyRemoteId: v.tallyRemoteId || null,
+                tallyMasterId: v.tallyMasterId || null,
+                voucherKey: v.voucherKey || null,
+                sourceFileName: v.sourceFileName || null,
+                customerName: v.customerName,
+                customerId,
+                voucherDate: d,
+                voucherType: v.voucherType,
+                voucherNumber: v.voucherNumber || null,
+                debit: isDebit ? amount : 0,
+                credit: isDebit ? 0 : amount,
+                narration: v.narration || null,
+                reference: v.reference || null,
+                importStatus: "CREATED",
+                ledgerEntryId: ledgerEntry.id,
+              },
+            });
 
         results.imported++;
         results.importedIds.push(tallyVoucher.id);
@@ -376,6 +392,7 @@ export async function POST(req: NextRequest) {
       const persistedVouchers = await prisma.tallyVoucher.findMany({
         where: { importBatchId: batchId },
         select: {
+          id: true,
           customerName: true,
           voucherDate: true,
           voucherType: true,
@@ -392,6 +409,7 @@ export async function POST(req: NextRequest) {
       });
 
       vouchers = persistedVouchers.map((voucher) => ({
+        stagedId: voucher.id,
         customerName: voucher.customerName || "",
         voucherDate: voucher.voucherDate.toISOString().slice(0, 10),
         voucherType: voucher.voucherType as TallyVoucherInput["voucherType"],

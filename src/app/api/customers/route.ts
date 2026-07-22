@@ -18,7 +18,7 @@ const CreateCustomerSchema = z.object({
   pinCode: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
   creditLimit: z.number().min(0).default(0),
-  openingBalance: z.number().min(0).default(0),
+  openingBalance: z.number().finite().default(0),
 });
 
 export async function GET(req: NextRequest) {
@@ -182,12 +182,12 @@ export async function POST(req: NextRequest) {
       });
 
       // Create opening balance ledger if non-zero
-      if (data.openingBalance > 0) {
+      if (data.openingBalance !== 0) {
         await tx.creditLedger.create({
           data: {
             customerId: newCustomer.id,
             transactionType: 'OPENING_BALANCE',
-            amount: data.openingBalance,
+            amount: Math.abs(data.openingBalance),
             balanceAfter: data.openingBalance,
             description: 'Opening balance',
           },

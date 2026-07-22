@@ -80,7 +80,7 @@ function parseExcelFile(text: string): PreviewRow[] {
       state: obj.state?.trim(),
       address: obj.address?.trim(),
       creditLimit: obj.creditLimit?.replace(/[^0-9.]/g, ''),
-      openingBalance: obj.openingBalance?.replace(/[^0-9.]/g, ''),
+      openingBalance: obj.openingBalance?.replace(/[^0-9.-]/g, ''),
       status: errors.length ? 'error' : 'valid',
       error: errors.join('; '),
     };
@@ -91,7 +91,6 @@ export default function ImportPage() {
   const [step, setStep] = useState<Step>('upload');
   const [rows, setRows] = useState<PreviewRow[]>([]);
   const [fileName, setFileName] = useState('');
-  const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -121,7 +120,6 @@ export default function ImportPage() {
   const handleImport = async () => {
     const validRows = rows.filter((r) => r.status === 'valid');
     if (!validRows.length) { setError('No valid rows to import'); return; }
-    setImporting(true);
     setStep('importing');
 
     let created = 0, skipped = 0, failed = 0;
@@ -153,7 +151,6 @@ export default function ImportPage() {
 
     setResult({ created, skipped, failed, errors });
     setStep('done');
-    setImporting(false);
   };
 
   const handleDownloadTemplate = () => {

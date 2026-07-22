@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Search, Plus, Loader2, X, UserPlus, Phone, MapPin,
-  Users, UserX, CreditCard, TrendingUp, TrendingDown,
+  Users, UserX, CreditCard,
   ChevronRight, CheckCircle,
 } from 'lucide-react';
 import CustomerActionMenu from '@/components/customers/CustomerActionMenu';
@@ -256,6 +256,8 @@ export default function CustomersPage() {
   }, [search]);
 
   // Reset to page 1 on filter/search change
+  // Reset pagination whenever search/filter inputs change.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, creditFilter]);
 
   const fetchCustomers = useCallback(async () => {
@@ -276,7 +278,9 @@ export default function CustomersPage() {
     finally { setLoading(false); }
   }, [page, debouncedSearch, statusFilter, creditFilter]);
 
-  useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
+  // Data fetching intentionally updates local request state.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void fetchCustomers(); }, [fetchCustomers]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -452,7 +456,6 @@ export default function CustomersPage() {
           customerName={selectedCustomer.fullName}
           customerCode={selectedCustomer.customerCode}
           currentCreditLimit={selectedCustomer.creditLimit}
-          currentOutstanding={selectedCustomer.currentBalance}
           currentOutstandingRaw={Math.max(0, toPaise(selectedCustomer.currentBalance))}
           onSuccess={() => onDialogSuccess('Credit limit updated successfully.')}
           onClose={closeDialog}

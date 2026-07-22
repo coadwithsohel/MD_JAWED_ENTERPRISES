@@ -173,11 +173,7 @@ export default function TransactionImportPage() {
       const res = await fetch("/api/tally/import?execute=true", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          batchId,
-          vouchers: preview.sampleVouchers,
-          sourceFileName: fileName,
-        }),
+        body: JSON.stringify({ batchId, sourceFileName: fileName }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Import failed");
