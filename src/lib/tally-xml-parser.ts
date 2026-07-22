@@ -214,21 +214,16 @@ export function normalizeDate(dateStr: string): string | null {
   }
 
   // Try DD-MM-YYYY or DD/MM/YYYY
-  const dmy = dateStr.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})$/);
+  const dmy = dateStr.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
   if (dmy) {
-    return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
-  }
-
-  // Try MM-DD-YYYY or MM/DD/YYYY
-  const mdy = dateStr.match(/^(\d{2})[-\/](\d{2})[-\/](\d{4})$/);
-  if (mdy) {
-    return `${mdy[3]}-${mdy[1]}-${mdy[2]}`;
+    return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
   }
 
   // Try ISO format
   const iso = Date.parse(dateStr);
-  if (!isNaN(iso)) {
-    return new Date(iso).toISOString().slice(0, 10);
+  if (!Number.isNaN(iso)) {
+    const date = new Date(iso);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
   }
 
   return null;
@@ -432,10 +427,42 @@ function normalizeHeader(value: string): string {
     .replace(/\s+/g, " ");
 }
 
+function parseStrictDate(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const yyyymmdd = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (yyyymmdd) {
+    const year = Number(yyyymmdd[1]);
+    const month = Number(yyyymmdd[2]);
+    const day = Number(yyyymmdd[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
+  }
+
+  const dmy = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmy) {
+    const day = Number(dmy[1]);
+    const month = Number(dmy[2]);
+    const year = Number(dmy[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
+  }
+
+  const iso = Date.parse(trimmed);
+  if (!Number.isNaN(iso)) {
+    const date = new Date(iso);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+  }
+
+  return null;
+}
+
 function parseNumericValue(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  const normalized = trimmed.replace(/,/g, "");
+  const normalized = trimmed.replace(/[₹,]/g, "").trim();
+  if (!/^-?\d+(\.\d+)?$/.test(normalized)) return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -451,6 +478,7 @@ export function validateTransactionCsvHeaders(headers: string[]): {
     ["voucher type", "vouchertype", "type"],
     ["debit"],
     ["credit"],
+    ["source entry key", "sourceentrykey", "source vch key", "sourcevchkey"],
   ];
   const missing = requiredGroups
     .filter((group) => !group.some((key) => normalizedHeaders.includes(key)))
@@ -548,7 +576,8 @@ export function parseTallyCsv(
 
     if (!customerName || !voucherDate) continue;
 
-    const normalizedDate = normalizeDate(voucherDate) || voucherDate;
+    const normalizedDate =
+      parseStrictDate(voucherDate) || normalizeDate(voucherDate);
     if (!normalizedDate) continue;
 
     const debit = debitValue ?? 0;

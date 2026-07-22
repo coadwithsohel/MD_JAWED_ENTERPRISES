@@ -32,7 +32,10 @@ function fromPaise(paise: number): string {
   }).format(rupees);
 }
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
 export async function GET(req: NextRequest) {
   const { error } = await requireAuth(req);
   if (error) return error;
@@ -41,7 +44,11 @@ export async function GET(req: NextRequest) {
 
   try {
     // Build customer query
+<<<<<<< HEAD
     const where: Prisma.CustomerWhereInput = {};
+=======
+    const where: { id?: string } = {};
+>>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
     if (customerId) {
       where.id = customerId;
     }

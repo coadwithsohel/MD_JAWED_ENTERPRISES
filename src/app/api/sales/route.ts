@@ -334,7 +334,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (paidAmount.gt(0) && customer) {
-          const receiptNumber = await generateReceiptNumber(tx);
+          const receiptNumber = await generateReceiptNumber();
           await tx.payment.create({
             data: {
               receiptNumber,

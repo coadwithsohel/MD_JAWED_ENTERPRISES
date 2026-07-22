@@ -679,8 +679,49 @@ export default function CustomerLedgerPage() {
     }
   }, [customerId, page, fromDate, toDate, voucherType]);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { fetchLedger(); }, [fetchLedger]);
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadLedger() {
+      if (!customerId) return;
+      try {
+        await Promise.resolve();
+        setLoading(true);
+        setError('');
+
+        const params = new URLSearchParams({ page: String(page), limit: '50' });
+        if (fromDate) params.set('from', fromDate);
+        if (toDate)   params.set('to', toDate);
+        if (voucherType) params.set('type', voucherType);
+        const res = await fetch(`/api/customers/${customerId}/ledger?${params}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j.error ?? `HTTP ${res.status}`);
+        }
+        const json = await res.json();
+
+        if (!controller.signal.aborted) {
+          setData(json);
+        }
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          setError(e instanceof Error ? e.message : 'Failed to load ledger');
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadLedger();
+
+    return () => {
+      controller.abort();
+    };
+  }, [customerId, page, fromDate, toDate, voucherType]);
 
   // Filter client-side by search (particulars / voucher number)
   const displayedEntries = data?.entries.filter((e) => {
@@ -715,7 +756,10 @@ export default function CustomerLedgerPage() {
 
   const customer = data?.customer;
   const summary = data?.summary;
+<<<<<<< HEAD
 
+=======
+>>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
   const addressParts = [customer?.address, customer?.city, customer?.state, customer?.pinCode].filter(Boolean);
   const fullAddress = addressParts.join(', ');
   // Narrowed references used inside the {data && (...)} block

@@ -117,6 +117,10 @@ enum ImportRowStatus {
   UPDATED
   SKIPPED
   FAILED
+  PARSED
+  MATCHED
+  DUPLICATE
+  IMPORTED
 }
 
 // ─── Models ──────────────────────────────────────────────────────────────────
@@ -539,35 +543,40 @@ model TallyImportBatch {
 }
 
 model TallyVoucher {
-  id              String   @id @default(cuid())
-  importBatchId   String
-  importBatch     TallyImportBatch @relation(fields: [importBatchId], references: [id])
-  tallyGuid       String?  @unique
-  tallyRemoteId   String?
-  tallyMasterId   String?
-  voucherKey      String?
-  sourceFileName  String?
-  customerName    String?  // Original customer name from Tally
-  customerId      String?  // Matched customer ID
-  customer        Customer? @relation(fields: [customerId], references: [id])
-  voucherDate     DateTime
-  voucherType     String   // 'SALES' | 'RECEIPT' | 'DEBIT_NOTE' | 'CREDIT_NOTE' | 'OPENING_BALANCE'
-  voucherNumber   String?
-  debit           Decimal  @default(0) @db.Decimal(14, 2)
-  credit          Decimal  @default(0) @db.Decimal(14, 2)
-  narration       String?
-  reference       String?
-  isDuplicate     Boolean  @default(false)
-  isSkipped       Boolean  @default(false)
-  errorMessage    String?
-  importStatus    ImportRowStatus @default(VALID)
-  ledgerEntryId   String?  // Link to created CreditLedger entry, if any
-  createdAt       DateTime @default(now())
+  id                  String   @id @default(cuid())
+  importBatchId       String
+  importBatch         TallyImportBatch @relation(fields: [importBatchId], references: [id])
+  tallyGuid           String?  @unique
+  tallyRemoteId       String?
+  tallyMasterId       String?
+  voucherKey          String?
+  sourceFileName      String?
+  customerName        String?  // Original customer name from Tally
+  mobile              String?
+  customerId          String?  // Matched customer ID
+  customer            Customer? @relation(fields: [customerId], references: [id])
+  matchedCustomerId   String?
+  matchedCustomerName String?
+  voucherDate         DateTime
+  voucherType         String   // 'SALES' | 'RECEIPT' | 'DEBIT_NOTE' | 'CREDIT_NOTE' | 'OPENING_BALANCE'
+  voucherNumber       String?
+  debit               Decimal  @default(0) @db.Decimal(14, 2)
+  credit              Decimal  @default(0) @db.Decimal(14, 2)
+  narration           String?
+  reference           String?
+  isDuplicate         Boolean  @default(false)
+  isSkipped           Boolean  @default(false)
+  errorMessage        String?
+  importStatus        ImportRowStatus @default(PARSED)
+  ledgerEntryId       String?  // Link to created CreditLedger entry, if any
+  createdAt           DateTime @default(now())
 
   @@index([importBatchId])
   @@index([customerId])
   @@index([tallyGuid])
   @@index([voucherDate])
+  @@index([voucherKey])
+  @@index([importStatus])
 }
 
 model CustomerLedgerTransaction {

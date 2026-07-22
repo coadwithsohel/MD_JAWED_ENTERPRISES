@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getCustomerDeletionEligibility } from "../src/lib/customer-delete-safety.ts";
+import { getCustomerDeletionEligibility } from "../src/lib/customer-delete-safety";
 
 test("getCustomerDeletionEligibility blocks customers with ledger transactions or import references", () => {
   const eligibility = getCustomerDeletionEligibility({
@@ -22,7 +22,7 @@ test("getCustomerDeletionEligibility blocks customers with ledger transactions o
   assert.ok(eligibility.reasons.includes("otherReferences"));
 });
 
-test("getCustomerDeletionEligibility allows customers with no financial or import references", () => {
+test("getCustomerDeletionEligibility allows customers with only non-financial import metadata", () => {
   const eligibility = getCustomerDeletionEligibility({
     openingBalance: 0,
     currentBalance: 0,
@@ -32,8 +32,8 @@ test("getCustomerDeletionEligibility allows customers with no financial or impor
       ledgers: 0,
       ledgerTransactions: 0,
       reminders: 0,
-      importRows: 0,
-      tallyVouchers: 0,
+      importRows: 3,
+      tallyVouchers: 2,
     },
   });
 

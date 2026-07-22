@@ -1,10 +1,19 @@
-'use client';
+"use client";
 
-import { useState, useCallback, useRef } from 'react';
-import { Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, Loader2, ArrowRight, Download } from 'lucide-react';
-import Link from 'next/link';
+import { useState, useCallback, useRef } from "react";
+import {
+  Upload,
+  FileSpreadsheet,
+  CheckCircle2,
+  AlertTriangle,
+  Loader2,
+  ArrowRight,
+  Download,
+} from "lucide-react";
+import Link from "next/link";
+import { parseSignedAmount } from "@/lib/money";
 
-type Step = 'upload' | 'preview' | 'importing' | 'done';
+type Step = "upload" | "preview" | "importing" | "done";
 
 interface PreviewRow {
   rowNumber: number;
@@ -17,7 +26,7 @@ interface PreviewRow {
   address?: string;
   creditLimit?: string;
   openingBalance?: string;
-  status: 'valid' | 'error';
+  status: "valid" | "error";
   error?: string;
 }
 
@@ -31,31 +40,51 @@ interface ImportResult {
 function parseCSVRow(row: string): string[] {
   const cells: string[] = [];
   let inQuotes = false;
-  let current = '';
+  let current = "";
   for (const ch of row) {
-    if (ch === '"') { inQuotes = !inQuotes; }
-    else if (ch === ',' && !inQuotes) { cells.push(current.trim()); current = ''; }
-    else { current += ch; }
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if (ch === "," && !inQuotes) {
+      cells.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
   }
   cells.push(current.trim());
   return cells;
 }
 
 function parseExcelFile(text: string): PreviewRow[] {
-  const lines = text.split('\n').filter((l) => l.trim());
+  const normalizedText = text.replace(/^\uFEFF/, "");
+  const lines = normalizedText.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
 
-  const headers = parseCSVRow(lines[0]).map((h) => h.toLowerCase().replace(/[\s_\-]/g, ''));
+  const headers = parseCSVRow(lines[0]).map((h) =>
+    h.toLowerCase().replace(/[\s_\-]/g, ""),
+  );
   const fieldMap: Record<string, string> = {
-    name: 'fullName', fullname: 'fullName', customername: 'fullName',
-    mobile: 'mobile', phone: 'mobile', contact: 'mobile', mobileno: 'mobile',
-    alternatemobile: 'alternateMobile', altmobile: 'alternateMobile',
-    email: 'email', emailaddress: 'email',
-    city: 'city', town: 'city',
-    state: 'state',
-    address: 'address', fulladdress: 'address',
-    creditlimit: 'creditLimit', limit: 'creditLimit',
-    openingbalance: 'openingBalance', balance: 'openingBalance', dues: 'openingBalance',
+    name: "fullName",
+    fullname: "fullName",
+    customername: "fullName",
+    mobile: "mobile",
+    phone: "mobile",
+    contact: "mobile",
+    mobileno: "mobile",
+    alternatemobile: "alternateMobile",
+    altmobile: "alternateMobile",
+    email: "email",
+    emailaddress: "email",
+    city: "city",
+    town: "city",
+    state: "state",
+    address: "address",
+    fulladdress: "address",
+    creditlimit: "creditLimit",
+    limit: "creditLimit",
+    openingbalance: "openingBalance",
+    balance: "openingBalance",
+    dues: "openingBalance",
   };
 
   const colMap = headers.map((h) => fieldMap[h] ?? null);
@@ -63,52 +92,93 @@ function parseExcelFile(text: string): PreviewRow[] {
   return lines.slice(1).map((line, idx) => {
     const cells = parseCSVRow(line);
     const obj: Record<string, string> = {};
-    colMap.forEach((field, i) => { if (field && cells[i]) obj[field] = cells[i]; });
+    colMap.forEach((field, i) => {
+      if (field && cells[i]) obj[field] = cells[i];
+    });
 
     const errors: string[] = [];
-    if (!obj.fullName?.trim()) errors.push('Name is required');
-    if (!obj.mobile?.trim()) errors.push('Mobile is required');
-    else if (!/^[6-9]\d{9}$/.test(obj.mobile.replace(/[\s\+\-]/g, '').replace(/^91/, ''))) errors.push('Invalid mobile number');
+    if (!obj.fullName?.trim()) errors.push("Name is required");
+    if (!obj.mobile?.trim()) errors.push("Mobile is required");
+    else if (
+      !/^[6-9]\d{9}$/.test(
+        obj.mobile.replace(/[\s\+\-]/g, "").replace(/^91/, ""),
+      )
+    )
+      errors.push("Invalid mobile number");
+
+    let openingBalance = 0;
+    let creditLimit = 0;
+    if (obj.openingBalance) {
+      try {
+        openingBalance = parseSignedAmount(obj.openingBalance);
+      } catch {
+        errors.push("Opening balance must be a signed number");
+      }
+    }
+    if (obj.creditLimit) {
+      try {
+        creditLimit = Math.max(0, parseSignedAmount(obj.creditLimit));
+      } catch {
+        errors.push("Credit limit must be a valid number");
+      }
+    }
 
     return {
       rowNumber: idx + 2,
-      fullName: obj.fullName?.trim() ?? '',
-      mobile: obj.mobile?.replace(/[\s\+\-]/g, '').replace(/^91/, '') ?? '',
+      fullName: obj.fullName?.trim() ?? "",
+      mobile: obj.mobile?.replace(/[\s\+\-]/g, "").replace(/^91/, "") ?? "",
       alternateMobile: obj.alternateMobile?.trim(),
       email: obj.email?.trim(),
       city: obj.city?.trim(),
       state: obj.state?.trim(),
       address: obj.address?.trim(),
+<<<<<<< HEAD
       creditLimit: obj.creditLimit?.replace(/[^0-9.]/g, ''),
       openingBalance: obj.openingBalance?.replace(/[^0-9.-]/g, ''),
       status: errors.length ? 'error' : 'valid',
       error: errors.join('; '),
+=======
+      creditLimit: obj.creditLimit ? String(creditLimit) : "0",
+      openingBalance: obj.openingBalance ? String(openingBalance) : "0",
+      status: errors.length ? "error" : "valid",
+      error: errors.join("; "),
+>>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
     };
   });
 }
 
 export default function ImportPage() {
-  const [step, setStep] = useState<Step>('upload');
+  const [step, setStep] = useState<Step>("upload");
   const [rows, setRows] = useState<PreviewRow[]>([]);
+<<<<<<< HEAD
   const [fileName, setFileName] = useState('');
+=======
+  const [fileName, setFileName] = useState("");
+  const [importing, setImporting] = useState(false);
+>>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
   const [result, setResult] = useState<ImportResult | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback((file: File) => {
     if (!file) return;
     setFileName(file.name);
-    setError('');
+    setError("");
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
       const parsed = parseExcelFile(text);
-      if (parsed.length === 0) { setError('No valid rows found. Make sure the file has headers and data.'); return; }
+      if (parsed.length === 0) {
+        setError(
+          "No valid rows found. Make sure the file has headers and data.",
+        );
+        return;
+      }
       setRows(parsed);
-      setStep('preview');
+      setStep("preview");
     };
-    reader.onerror = () => setError('Failed to read file');
-    reader.readAsText(file, 'utf-8');
+    reader.onerror = () => setError("Failed to read file");
+    reader.readAsText(file, "utf-8");
   }, []);
 
   const handleDrop = (e: React.DragEvent) => {
@@ -118,18 +188,30 @@ export default function ImportPage() {
   };
 
   const handleImport = async () => {
+<<<<<<< HEAD
     const validRows = rows.filter((r) => r.status === 'valid');
     if (!validRows.length) { setError('No valid rows to import'); return; }
     setStep('importing');
+=======
+    const validRows = rows.filter((r) => r.status === "valid");
+    if (!validRows.length) {
+      setError("No valid rows to import");
+      return;
+    }
+    setImporting(true);
+    setStep("importing");
+>>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
 
-    let created = 0, skipped = 0, failed = 0;
+    let created = 0,
+      skipped = 0,
+      failed = 0;
     const errors: { row: number; error: string }[] = [];
 
     for (const row of validRows) {
       try {
-        const res = await fetch('/api/customers', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const res = await fetch("/api/customers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             fullName: row.fullName,
             mobile: row.mobile,
@@ -143,58 +225,88 @@ export default function ImportPage() {
           }),
         });
         const data = await res.json();
-        if (res.status === 409) { skipped++; }
-        else if (res.ok) { created++; }
-        else { failed++; errors.push({ row: row.rowNumber, error: data.error || 'Unknown error' }); }
-      } catch { failed++; errors.push({ row: row.rowNumber, error: 'Network error' }); }
+        if (res.status === 409) {
+          skipped++;
+        } else if (res.ok) {
+          created++;
+        } else {
+          failed++;
+          errors.push({
+            row: row.rowNumber,
+            error: data.error || "Unknown error",
+          });
+        }
+      } catch {
+        failed++;
+        errors.push({ row: row.rowNumber, error: "Network error" });
+      }
     }
 
     setResult({ created, skipped, failed, errors });
+<<<<<<< HEAD
     setStep('done');
+=======
+    setStep("done");
+    setImporting(false);
+>>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
   };
 
   const handleDownloadTemplate = () => {
-    const csv = 'Name,Mobile,Alternate Mobile,Email,City,State,Address,Credit Limit,Opening Balance\nAhmad Khan,9876543210,,ahmad@example.com,Mumbai,Maharashtra,,5000,1200';
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const csv =
+      "Name,Mobile,Alternate Mobile,Email,City,State,Address,Credit Limit,Opening Balance\nAhmad Khan,9876543210,,ahmad@example.com,Mumbai,Maharashtra,,5000,1200";
+    const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = 'customers-template.csv';
+    a.download = "customers-template.csv";
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const validCount = rows.filter((r) => r.status === 'valid').length;
-  const errorCount = rows.filter((r) => r.status === 'error').length;
+  const validCount = rows.filter((r) => r.status === "valid").length;
+  const errorCount = rows.filter((r) => r.status === "error").length;
 
   return (
     <div className="max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Import Customers</h1>
-          <p className="text-sm text-slate-500">Upload a CSV file to bulk-import customer data</p>
+          <h1 className="text-2xl font-bold text-slate-900">
+            Import Customers
+          </h1>
+          <p className="text-sm text-slate-500">
+            Upload a CSV file to bulk-import customer data
+          </p>
         </div>
-        <Link href="/dashboard/customers" className="text-sm text-blue-600 hover:underline">← Back to Customers</Link>
+        <Link
+          href="/dashboard/customers"
+          className="text-sm text-blue-600 hover:underline"
+        >
+          ← Back to Customers
+        </Link>
       </div>
 
       {/* Steps */}
       <div className="flex items-center gap-2">
         {[
-          { id: 'upload', label: '1. Upload' },
-          { id: 'preview', label: '2. Preview' },
-          { id: 'importing', label: '3. Import' },
-          { id: 'done', label: '4. Done' },
+          { id: "upload", label: "1. Upload" },
+          { id: "preview", label: "2. Preview" },
+          { id: "importing", label: "3. Import" },
+          { id: "done", label: "4. Done" },
         ].map((s, i, arr) => (
           <div key={s.id} className="flex items-center">
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${step === s.id ? 'bg-blue-600 text-white' : ['preview', 'importing', 'done'].slice(arr.indexOf(arr.find((a) => a.id === step) ?? arr[0])).includes(s.id) || step === 'done' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'}`}>
+            <div
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${step === s.id ? "bg-blue-600 text-white" : ["preview", "importing", "done"].slice(arr.indexOf(arr.find((a) => a.id === step) ?? arr[0])).includes(s.id) || step === "done" ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-400"}`}
+            >
               {s.label}
             </div>
-            {i < arr.length - 1 && <ArrowRight className="h-3 w-3 text-slate-300 mx-1" />}
+            {i < arr.length - 1 && (
+              <ArrowRight className="h-3 w-3 text-slate-300 mx-1" />
+            )}
           </div>
         ))}
       </div>
 
-      {step === 'upload' && (
+      {step === "upload" && (
         <div className="space-y-4">
           <div
             onDrop={handleDrop}
@@ -203,44 +315,84 @@ export default function ImportPage() {
             className="border-2 border-dashed border-slate-200 rounded-2xl p-16 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-colors"
           >
             <FileSpreadsheet className="h-14 w-14 text-slate-300 mx-auto mb-4" />
-            <p className="text-lg font-semibold text-slate-700">Drop your CSV file here</p>
+            <p className="text-lg font-semibold text-slate-700">
+              Drop your CSV file here
+            </p>
             <p className="text-sm text-slate-400 mt-1">or click to browse</p>
-            <p className="text-xs text-slate-400 mt-3">Supports .csv format · UTF-8 encoded</p>
-            <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
+            <p className="text-xs text-slate-400 mt-3">
+              Supports .csv format · UTF-8 encoded
+            </p>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.[0]) handleFile(e.target.files[0]);
+              }}
+            />
           </div>
-          {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+              {error}
+            </div>
+          )}
           <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl p-4">
             <div>
-              <p className="text-sm font-medium text-slate-700">Need a template?</p>
-              <p className="text-xs text-slate-500">Download our CSV template with the correct column format</p>
+              <p className="text-sm font-medium text-slate-700">
+                Need a template?
+              </p>
+              <p className="text-xs text-slate-500">
+                Download our CSV template with the correct column format
+              </p>
             </div>
-            <button onClick={handleDownloadTemplate} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium transition-colors">
+            <button
+              onClick={handleDownloadTemplate}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium transition-colors"
+            >
               <Download className="h-4 w-4" /> Template
             </button>
           </div>
         </div>
       )}
 
-      {step === 'preview' && (
+      {step === "preview" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg">
                 <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <span className="text-sm font-medium text-green-700">{validCount} valid</span>
+                <span className="text-sm font-medium text-green-700">
+                  {validCount} valid
+                </span>
               </div>
               {errorCount > 0 && (
                 <div className="flex items-center gap-2 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg">
                   <AlertTriangle className="h-4 w-4 text-red-600" />
-                  <span className="text-sm font-medium text-red-700">{errorCount} errors</span>
+                  <span className="text-sm font-medium text-red-700">
+                    {errorCount} errors
+                  </span>
                 </div>
               )}
               <span className="text-sm text-slate-500">{fileName}</span>
             </div>
             <div className="flex gap-2">
-              <button onClick={() => { setStep('upload'); setRows([]); }} className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg">Back</button>
-              <button onClick={handleImport} disabled={validCount === 0} className="px-4 py-1.5 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50 flex items-center gap-2">
-                <Upload className="h-4 w-4" /> Import {validCount} Customers
+              <button
+                onClick={() => {
+                  setStep("upload");
+                  setRows([]);
+                }}
+                className="px-3 py-1.5 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
+              >
+                Back
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={validCount === 0 || importing}
+                className="px-4 py-1.5 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50 flex items-center gap-2"
+              >
+                {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {importing ? 'Importing...' : `Import ${validCount} Customers`}
               </button>
             </div>
           </div>
@@ -250,25 +402,61 @@ export default function ImportPage() {
               <table className="min-w-full divide-y divide-slate-200 text-sm">
                 <thead className="bg-slate-50 sticky top-0">
                   <tr>
-                    {['Row', 'Name', 'Mobile', 'City', 'Credit Limit', 'Opening Balance', 'Status'].map((h) => (
-                      <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase whitespace-nowrap">{h}</th>
+                    {[
+                      "Row",
+                      "Name",
+                      "Mobile",
+                      "City",
+                      "Credit Limit",
+                      "Opening Balance",
+                      "Status",
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase whitespace-nowrap"
+                      >
+                        {h}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {rows.map((row) => (
-                    <tr key={row.rowNumber} className={row.status === 'error' ? 'bg-red-50' : ''}>
-                      <td className="px-4 py-2.5 text-xs text-slate-400">{row.rowNumber}</td>
-                      <td className="px-4 py-2.5 font-medium text-slate-900">{row.fullName || <span className="text-red-400 italic">missing</span>}</td>
-                      <td className="px-4 py-2.5 font-mono text-slate-600">{row.mobile || <span className="text-red-400 italic">missing</span>}</td>
-                      <td className="px-4 py-2.5 text-slate-500">{row.city || '—'}</td>
-                      <td className="px-4 py-2.5 text-slate-500">₹{row.creditLimit || '0'}</td>
-                      <td className="px-4 py-2.5 text-slate-500">₹{row.openingBalance || '0'}</td>
+                    <tr
+                      key={row.rowNumber}
+                      className={row.status === "error" ? "bg-red-50" : ""}
+                    >
+                      <td className="px-4 py-2.5 text-xs text-slate-400">
+                        {row.rowNumber}
+                      </td>
+                      <td className="px-4 py-2.5 font-medium text-slate-900">
+                        {row.fullName || (
+                          <span className="text-red-400 italic">missing</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-slate-600">
+                        {row.mobile || (
+                          <span className="text-red-400 italic">missing</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-500">
+                        {row.city || "—"}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-500">
+                        ₹{row.creditLimit || "0"}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-500">
+                        ₹{row.openingBalance || "0"}
+                      </td>
                       <td className="px-4 py-2.5">
-                        {row.status === 'valid' ? (
-                          <span className="flex items-center gap-1 text-xs text-green-700"><CheckCircle2 className="h-3 w-3" /> Valid</span>
+                        {row.status === "valid" ? (
+                          <span className="flex items-center gap-1 text-xs text-green-700">
+                            <CheckCircle2 className="h-3 w-3" /> Valid
+                          </span>
                         ) : (
-                          <span className="flex items-center gap-1 text-xs text-red-600"><AlertTriangle className="h-3 w-3" /> {row.error}</span>
+                          <span className="flex items-center gap-1 text-xs text-red-600">
+                            <AlertTriangle className="h-3 w-3" /> {row.error}
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -280,46 +468,75 @@ export default function ImportPage() {
         </div>
       )}
 
-      {step === 'importing' && (
+      {step === "importing" && (
         <div className="flex flex-col items-center justify-center py-24 bg-white rounded-2xl border border-slate-200">
           <Loader2 className="h-12 w-12 text-blue-500 animate-spin mb-4" />
           <h2 className="text-xl font-bold text-slate-900">Importing...</h2>
-          <p className="text-slate-500 mt-2 text-sm">Creating {validCount} customers — please wait</p>
+          <p className="text-slate-500 mt-2 text-sm">
+            Creating {validCount} customers — please wait
+          </p>
         </div>
       )}
 
-      {step === 'done' && result && (
+      {step === "done" && result && (
         <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-6">
           <div className="h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
             <CheckCircle2 className="h-8 w-8 text-green-600" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">Import Complete!</h2>
+            <h2 className="text-2xl font-bold text-slate-900">
+              Import Complete!
+            </h2>
             <p className="text-slate-500 mt-1">{fileName}</p>
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-green-50 border border-green-100 rounded-xl p-4">
-              <p className="text-3xl font-black text-green-600">{result.created}</p>
+              <p className="text-3xl font-black text-green-600">
+                {result.created}
+              </p>
               <p className="text-sm text-green-700 mt-1">Created</p>
             </div>
             <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
-              <p className="text-3xl font-black text-amber-600">{result.skipped}</p>
+              <p className="text-3xl font-black text-amber-600">
+                {result.skipped}
+              </p>
               <p className="text-sm text-amber-700 mt-1">Skipped (duplicate)</p>
             </div>
             <div className="bg-red-50 border border-red-100 rounded-xl p-4">
-              <p className="text-3xl font-black text-red-600">{result.failed}</p>
+              <p className="text-3xl font-black text-red-600">
+                {result.failed}
+              </p>
               <p className="text-sm text-red-700 mt-1">Failed</p>
             </div>
           </div>
           {result.errors.length > 0 && (
             <div className="text-left bg-red-50 border border-red-100 rounded-xl p-4 max-h-40 overflow-y-auto">
               <p className="text-sm font-semibold text-red-700 mb-2">Errors:</p>
-              {result.errors.map((e) => <p key={e.row} className="text-xs text-red-600">Row {e.row}: {e.error}</p>)}
+              {result.errors.map((e) => (
+                <p key={e.row} className="text-xs text-red-600">
+                  Row {e.row}: {e.error}
+                </p>
+              ))}
             </div>
           )}
           <div className="flex justify-center gap-4">
-            <button onClick={() => { setStep('upload'); setRows([]); setResult(null); setFileName(''); }} className="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl">Import More</button>
-            <Link href="/dashboard/customers" className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl">View Customers</Link>
+            <button
+              onClick={() => {
+                setStep("upload");
+                setRows([]);
+                setResult(null);
+                setFileName("");
+              }}
+              className="px-4 py-2 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl"
+            >
+              Import More
+            </button>
+            <Link
+              href="/dashboard/customers"
+              className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl"
+            >
+              View Customers
+            </Link>
           </div>
         </div>
       )}

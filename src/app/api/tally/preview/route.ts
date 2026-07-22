@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 
+
 interface TallyVoucherInput {
   tallyGuid?: string;
   tallyRemoteId?: string;
@@ -113,7 +114,13 @@ export async function POST(req: NextRequest) {
     const existingVoucherKeys = new Set<string>();
     const existingGuids = new Set<string>();
     const sourceKeys = vouchers
-      .map((voucher) => voucher.voucherKey || voucher.tallyGuid)
+      .map(
+        (voucher) =>
+          voucher.voucherKey ||
+          voucher.tallyGuid ||
+          voucher.tallyRemoteId ||
+          voucher.tallyMasterId,
+      )
       .filter((value): value is string => Boolean(value));
     if (sourceKeys.length > 0) {
       const existing = await prisma.tallyVoucher.findMany({
@@ -124,9 +131,24 @@ export async function POST(req: NextRequest) {
             {
               tallyGuid: { in: sourceKeys.filter((value) => value.length > 0) },
             },
+            {
+              tallyRemoteId: {
+                in: sourceKeys.filter((value) => value.length > 0),
+              },
+            },
+            {
+              tallyMasterId: {
+                in: sourceKeys.filter((value) => value.length > 0),
+              },
+            },
           ],
         },
-        select: { voucherKey: true, tallyGuid: true },
+        select: {
+          voucherKey: true,
+          tallyGuid: true,
+          tallyRemoteId: true,
+          tallyMasterId: true,
+        },
       });
       for (const entry of existing) {
         if (entry.voucherKey) existingVoucherKeys.add(entry.voucherKey);
@@ -185,7 +207,11 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      const sourceKey = voucher.voucherKey || voucher.tallyGuid;
+      const sourceKey =
+        voucher.voucherKey ||
+        voucher.tallyGuid ||
+        voucher.tallyRemoteId ||
+        voucher.tallyMasterId;
       if (
         sourceKey &&
         (existingVoucherKeys.has(sourceKey) || existingGuids.has(sourceKey))

@@ -251,22 +251,49 @@ export function useCustomerStats(customerId: string | null) {
 
   useEffect(() => {
     if (!customerId) return;
+<<<<<<< HEAD
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     fetch(`/api/customers/${customerId}`)
       .then((r) => r.json())
       .then((data) => {
+=======
+
+    const controller = new AbortController();
+
+    async function loadStats() {
+      try {
+        await Promise.resolve();
+        setLoading(true);
+
+        const res = await fetch(`/api/customers/${customerId}`, {
+          signal: controller.signal,
+        });
+        const data = await res.json();
+>>>>>>> 96ee175d7fd0837b69320708123c41bc2a663c57
         const c = data.customer;
-        if (c) {
+
+        if (!controller.signal.aborted && c) {
           setStats({
             invoiceCount: c.sales?.length ?? 0,
             paymentCount: c.payments?.length ?? 0,
             outstandingPaise: toPaise(c.currentBalance),
           });
         }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      } catch {
+        // Ignore abort errors
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadStats();
+
+    return () => {
+      controller.abort();
+    };
   }, [customerId]);
 
   return { stats, loading };
