@@ -15,7 +15,37 @@ import {
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
+// ─── Query timeout helper ──────────────────────────────────────────────────
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label}_TIMEOUT`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// ─── Dashboard trace helper (safe, no sensitive data) ──────────────────────
+const traceStage = (stage: string) => {
+  if (process.env.NODE_ENV === "development" || process.env.VERCEL_ENV) {
+    console.info("[dashboard-trace]", { stage });
+  }
+};
+
+// ─── Formatting ────────────────────────────────────────────────────────────
 function fmt(n: Decimal | number | null | undefined): string {
   const num =
     n == null ? 0 : typeof n === "number" ? n : parseFloat(n.toString());
@@ -26,12 +56,21 @@ function fmt(n: Decimal | number | null | undefined): string {
   }).format(num);
 }
 
+// ─── Data fetching ────────────────────────────────────────────────────────
 async function getDashboardData() {
+  traceStage("request-start");
+  const startTotal = performance.now();
+
+  // No auth call here — this is a server component rendered after auth in middleware/layout
+  traceStage("auth-complete");
+
   const now = new Date();
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date(now);
   todayEnd.setHours(23, 59, 59, 999);
+
+  const QUERY_TIMEOUT = 8_000; // 8 seconds per query
 
   const [
     todaySales,
@@ -42,51 +81,93 @@ async function getDashboardData() {
     recentSales,
     recentImport,
   ] = await Promise.all([
-    prisma.sale.aggregate({
-      where: {
-        createdAt: { gte: todayStart, lte: todayEnd },
-        status: "COMPLETED",
-      },
-      _sum: { grandTotal: true },
-      _count: { _all: true },
-    }),
-    prisma.sale.aggregate({
-      where: {
-        status: { in: ["COMPLETED", "PARTIALLY_RETURNED"] },
-        saleType: { in: ["CREDIT", "PARTIAL"] },
-        pendingAmount: { gt: new Decimal(0) },
-        customer: { isActive: true, deletedAt: null },
-      },
-      _sum: { pendingAmount: true },
-      _count: { _all: true },
-    }),
-    prisma.product.count({
-      where: { stockQuantity: { lte: 5 }, isActive: true },
-    }),
-    prisma.customer.count({ where: { isActive: true, deletedAt: null } }),
-    getOverdueSummary(),
-    prisma.sale.findMany({
-      where: { status: "COMPLETED" },
-      orderBy: { createdAt: "desc" },
-      take: 8,
-      include: { customer: { select: { fullName: true, mobile: true } } },
-    }),
-    prisma.customerImportBatch
-      .findFirst({
-        orderBy: { createdAt: "desc" },
-        include: { importedBy: { select: { fullName: true } } },
-      })
-      .catch((error) => {
-        const code =
-          typeof error === "object" && error !== null && "code" in error
-            ? String((error as { code?: unknown }).code)
-            : "";
-        if (code === "P2021") {
-          return null;
-        }
-        throw error;
+    withTimeout(
+      prisma.sale.aggregate({
+        where: {
+          createdAt: { gte: todayStart, lte: todayEnd },
+          status: "COMPLETED",
+        },
+        _sum: { grandTotal: true },
+        _count: { _all: true },
       }),
+      QUERY_TIMEOUT,
+      "TODAY_SALES",
+    ),
+    withTimeout(
+      prisma.sale.aggregate({
+        where: {
+          status: { in: ["COMPLETED", "PARTIALLY_RETURNED"] },
+          saleType: { in: ["CREDIT", "PARTIAL"] },
+          pendingAmount: { gt: new Decimal(0) },
+          customer: { isActive: true, deletedAt: null },
+        },
+        _sum: { pendingAmount: true },
+        _count: { _all: true },
+      }),
+      QUERY_TIMEOUT,
+      "PENDING_CREDIT",
+    ),
+    withTimeout(
+      prisma.product.count({
+        where: { stockQuantity: { lte: 5 }, isActive: true },
+      }),
+      QUERY_TIMEOUT,
+      "LOW_STOCK",
+    ),
+    withTimeout(
+      prisma.customer.count({ where: { isActive: true, deletedAt: null } }),
+      QUERY_TIMEOUT,
+      "CUSTOMER_COUNT",
+    ),
+    withTimeout(
+      getOverdueSummary(),
+      QUERY_TIMEOUT,
+      "OVERDUE_SUMMARY",
+    ),
+    withTimeout(
+      prisma.sale.findMany({
+        where: { status: "COMPLETED" },
+        orderBy: { createdAt: "desc" },
+        take: 8,
+        include: { customer: { select: { fullName: true, mobile: true } } },
+      }),
+      QUERY_TIMEOUT,
+      "RECENT_SALES",
+    ),
+    withTimeout(
+      prisma.customerImportBatch
+        .findFirst({
+          orderBy: { createdAt: "desc" },
+          include: { importedBy: { select: { fullName: true } } },
+        })
+        .catch((error) => {
+          const code =
+            typeof error === "object" && error !== null && "code" in error
+              ? String((error as { code?: unknown }).code)
+              : "";
+          if (code === "P2021") {
+            return null;
+          }
+          throw error;
+        }),
+      QUERY_TIMEOUT,
+      "RECENT_IMPORT",
+    ),
   ]);
+
+  traceStage("queries-complete");
+  const endTotal = performance.now();
+
+  // Safe timing log (no credentials, hashes, or personal data)
+  console.info("[dashboard-performance]", {
+    durationMs: Math.round(endTotal - startTotal),
+    totalCustomers,
+    pendingCreditCount: pendingCredit._count._all,
+    overdueCount: overdueStats.overdueCount,
+    todaySalesCount: todaySales._count._all,
+  });
+
+  traceStage("response-return");
 
   return {
     todaySales,

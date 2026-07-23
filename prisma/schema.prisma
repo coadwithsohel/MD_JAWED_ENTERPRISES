@@ -281,6 +281,7 @@ model Product {
   @@index([categoryId])
   @@index([brandId])
   @@index([isActive])
+  @@index([stockQuantity, isActive])
 }
 
 model ProductSerial {
@@ -332,6 +333,8 @@ model Sale {
   @@index([paymentStatus])
   @@index([status])
   @@index([pendingAmount])
+  @@index([status, createdAt])
+  @@index([status, saleType, pendingAmount])
 }
 
 model SaleItem {
