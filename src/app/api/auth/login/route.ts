@@ -56,6 +56,20 @@ const LoginSchema = z.object({
   password: z.string().min(1),
 });
 
+// ─── Request timeout guard ──────────────────────────────────────────────
+// Prevents the login request from hanging indefinitely when the database
+// connection pool is exhausted or the database is unresponsive.
+const LOGIN_TIMEOUT_MS = 15_000; // 15 seconds
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error("Login request timed out")), ms),
+    ),
+  ]);
+}
+
 export async function POST(req: NextRequest) {
   try {
     if (!isAuthSecretConfigured()) {
@@ -95,7 +109,11 @@ export async function POST(req: NextRequest) {
 
     const { mobile, password } = parsed.data;
 
-    const user = await prisma.user.findUnique({ where: { mobile } });
+    // Use withTimeout to prevent indefinite hang
+    const user = await withTimeout(
+      prisma.user.findUnique({ where: { mobile } }),
+      LOGIN_TIMEOUT_MS,
+    );
 
     // Always run argon2 verify to prevent timing attacks
     const dummyHash = "$argon2id$v=19$m=65536,t=3,p=4$dummy$dummy";
@@ -139,12 +157,15 @@ export async function POST(req: NextRequest) {
     return res;
   } catch (err) {
     console.error(
-      "[POST /api/auth/login]",
-      err instanceof Error ? err.message : "Unknown error",
+      "[auth-login-error]",
+      err instanceof Error
+        ? { stage: "login", errorName: err.name, message: err.message }
+        : { stage: "login", errorName: "Unknown", message: String(err) },
     );
+    const status = err instanceof Error && err.message === "Login request timed out" ? 504 : 500;
     return NextResponse.json(
-      { error: "Authentication failed" },
-      { status: 500 },
+      { error: status === 504 ? "Request timed out. Please try again." : "Authentication failed" },
+      { status },
     );
   }
 }
