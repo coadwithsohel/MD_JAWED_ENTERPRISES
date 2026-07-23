@@ -36,6 +36,11 @@ export async function getOverdueData(options?: {
     saleType: { in: ['CREDIT' as const, 'PARTIAL' as const] },
     pendingAmount: { gt: new Decimal(0) },
     dueDate: { lt: now },
+    // Exclude inactive and deleted customers from current overdue
+    customer: {
+      isActive: true,
+      deletedAt: null,
+    },
     ...(options?.customerId ? { customerId: options.customerId } : {}),
     ...(options?.search
       ? {
@@ -160,6 +165,7 @@ export async function getOverdueSummary() {
       saleType: { in: ['CREDIT', 'PARTIAL'] },
       pendingAmount: { gt: new Decimal(0) },
       dueDate: { lt: now },
+      customer: { isActive: true, deletedAt: null },
     },
     _sum: { pendingAmount: true },
     _count: { _all: true },

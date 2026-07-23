@@ -29,12 +29,13 @@ export async function GET(req: NextRequest) {
           status: { in: ['COMPLETED', 'PARTIALLY_RETURNED'] },
           saleType: { in: ['CREDIT', 'PARTIAL'] },
           pendingAmount: { gt: new Decimal(0) },
+          customer: { isActive: true, deletedAt: null },
         },
         _sum: { pendingAmount: true },
         _count: { _all: true },
       }),
       prisma.product.count({ where: { stockQuantity: { lte: 5 }, isActive: true } }),
-      prisma.customer.count({ where: { isActive: true } }),
+      prisma.customer.count({ where: { isActive: true, deletedAt: null } }),
       getOverdueSummary(),
     ]);
 

@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     const { mode } = parsed.data;
 
     const customers = await prisma.customer.findMany({
-      where: { isActive: false },
+      where: { isActive: false, deletedAt: null },
       select: { id: true, fullName: true },
     });
 
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
 
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.customer.updateMany({
-        where: { isActive: false },
+        where: { isActive: false, deletedAt: null },
         data: {
           isActive: true,
           deletedAt: null,

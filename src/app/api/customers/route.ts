@@ -43,12 +43,15 @@ export async function GET(req: NextRequest) {
   const where: Prisma.CustomerWhereInput = {};
 
   // Status filtering
+  // Always exclude soft-deleted (permanently deleted) customers from normal listing
+  where.deletedAt = null;
+
   if (statusFilter === "active") {
     where.isActive = true;
   } else if (statusFilter === "inactive") {
     where.isActive = false;
   }
-  // 'all' = no filter on isActive
+  // 'all' = no filter on isActive, but deletedAt: null still applies
 
   // Credit status filtering
   if (creditFilter === "outstanding") {

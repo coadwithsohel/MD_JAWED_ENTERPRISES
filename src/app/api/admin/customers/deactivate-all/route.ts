@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
         where: { id: { in: ids }, isActive: true, deletedAt: null },
         data: {
           isActive: false,
-          deletedAt: new Date(),
+          deletedAt: null, // Do NOT set deletedAt — that's for soft-delete, not deactivation
           deletedBy: auth.userId,
           deleteReason: reason,
         },

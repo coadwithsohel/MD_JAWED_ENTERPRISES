@@ -9,8 +9,10 @@ import {
   Loader2,
   ArrowRight,
   Download,
+  XCircle,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { parseSignedAmount } from "@/lib/money";
 
 type Step = "upload" | "preview" | "importing" | "done";
@@ -141,6 +143,7 @@ function parseExcelFile(text: string): PreviewRow[] {
 }
 
 export default function ImportPage() {
+  const router = useRouter();
   const [step, setStep] = useState<Step>("upload");
   const [rows, setRows] = useState<PreviewRow[]>([]);
   const [fileName, setFileName] = useState("");
@@ -185,17 +188,12 @@ export default function ImportPage() {
     setImporting(true);
     setStep("importing");
 
-    let created = 0,
-      skipped = 0,
-      failed = 0;
-    const errors: { row: number; error: string }[] = [];
-
-    for (const row of validRows) {
-      try {
-        const res = await fetch("/api/customers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+    try {
+      const res = await fetch("/api/customers/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customers: validRows.map((row) => ({
             fullName: row.fullName,
             mobile: row.mobile,
             alternateMobile: row.alternateMobile || null,
@@ -205,27 +203,56 @@ export default function ImportPage() {
             address: row.address || null,
             creditLimit: Number(row.creditLimit ?? 0),
             openingBalance: Number(row.openingBalance ?? 0),
-          }),
-        });
+          })),
+        }),
+      });
+
+      // ── Handle stale session ────────────────────────────────────────────────
+      if (res.status === 401) {
         const data = await res.json();
-        if (res.status === 409) {
-          skipped++;
-        } else if (res.ok) {
-          created++;
-        } else {
-          failed++;
-          errors.push({
-            row: row.rowNumber,
-            error: data.error || "Unknown error",
-          });
+        if (data.error === "SESSION_USER_NOT_FOUND") {
+          setError("Your session has expired. Please sign in again.");
+          // Clear local state and redirect to login
+          setTimeout(() => router.push("/login"), 2000);
+          setStep("upload");
+          setImporting(false);
+          return;
         }
-      } catch {
-        failed++;
-        errors.push({ row: row.rowNumber, error: "Network error" });
       }
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setResult({
+          created: data.created ?? 0,
+          skipped: data.skipped ?? 0,
+          failed: data.failed ?? 0,
+          errors: data.errors ?? [],
+        });
+      } else {
+        const serverError = data.error || "Server error";
+        setResult({
+          created: 0,
+          skipped: 0,
+          failed: validRows.length,
+          errors: validRows.map((r) => ({
+            row: r.rowNumber,
+            error: serverError,
+          })),
+        });
+      }
+    } catch {
+      setResult({
+        created: 0,
+        skipped: 0,
+        failed: validRows.length,
+        errors: validRows.map((r) => ({
+          row: r.rowNumber,
+          error: "Network error — server may have timed out",
+        })),
+      });
     }
 
-    setResult({ created, skipped, failed, errors });
     setStep("done");
     setImporting(false);
   };
@@ -459,21 +486,47 @@ export default function ImportPage() {
 
       {step === "done" && result && (
         <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-6">
-          <div className="h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-            <CheckCircle2 className="h-8 w-8 text-green-600" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">
-              Import Complete!
-            </h2>
-            <p className="text-slate-500 mt-1">{fileName}</p>
-          </div>
+          {result.created > 0 ? (
+            <>
+              <div className="h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+                <CheckCircle2 className="h-8 w-8 text-green-600" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">
+                  Import Complete!
+                </h2>
+                <p className="text-slate-500 mt-1">{fileName}</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="h-16 w-16 bg-red-100 rounded-full flex items-center justify-center mx-auto">
+                <XCircle className="h-8 w-8 text-red-500" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">
+                  No customers were imported
+                </h2>
+                <p className="text-slate-500 mt-1">
+                  All {result.failed + result.skipped} rows were skipped or failed.
+                </p>
+              </div>
+            </>
+          )}
           <div className="grid grid-cols-3 gap-4">
-            <div className="bg-green-50 border border-green-100 rounded-xl p-4">
-              <p className="text-3xl font-black text-green-600">
+            <div className={`border rounded-xl p-4 ${
+              result.created > 0
+                ? "bg-green-50 border-green-100"
+                : "bg-slate-50 border-slate-200"
+            }`}>
+              <p className={`text-3xl font-black ${
+                result.created > 0 ? "text-green-600" : "text-slate-400"
+              }`}>
                 {result.created}
               </p>
-              <p className="text-sm text-green-700 mt-1">Created</p>
+              <p className={`text-sm mt-1 ${
+                result.created > 0 ? "text-green-700" : "text-slate-500"
+              }`}>Created</p>
             </div>
             <div className="bg-amber-50 border border-amber-100 rounded-xl p-4">
               <p className="text-3xl font-black text-amber-600">

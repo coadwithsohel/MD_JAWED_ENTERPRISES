@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   CheckCircle2,
@@ -51,13 +52,22 @@ interface PreviewSummary {
   }>;
 }
 
+interface InvalidRowDetail {
+  row: number;
+  field: string;
+  value: string;
+  message: string;
+}
+
 export default function TransactionImportPage() {
+  const router = useRouter();
   const [step, setStep] = useState<Step>("upload");
   const [fileName, setFileName] = useState("");
   const [batchId, setBatchId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<PreviewSummary | null>(null);
+  const [invalidRowDetails, setInvalidRowDetails] = useState<InvalidRowDetail[]>([]);
   const [result, setResult] = useState<{
     imported: number;
     duplicates: number;
@@ -78,6 +88,7 @@ export default function TransactionImportPage() {
     }
 
     setError("");
+    setInvalidRowDetails([]);
     setLoading(true);
     setStep("parse");
     setPreview(null);
@@ -97,20 +108,47 @@ export default function TransactionImportPage() {
         body: formData,
       });
       const contentType = res.headers.get("content-type") || "";
-      let payload: {
-        batchId?: string;
-        error?: string;
-        details?: string;
-      } | null = null;
+      let payload: Record<string, unknown> | null = null;
       if (contentType.includes("application/json")) {
         payload = await res.json().catch(() => null);
       }
+
+      if (res.status === 401) {
+        // Session expired — redirect to login
+        setError("Your session is no longer valid. Please sign in again.");
+        setTimeout(() => router.push("/login"), 2000);
+        return;
+      }
+
+      if (res.status === 422) {
+        // Validation error — show header/row validation details
+        const details = (payload?.details as string) || "Validation failed";
+        const invalidRows = (payload?.invalidRows as InvalidRowDetail[]) || [];
+        if (invalidRows.length > 0) {
+          setInvalidRowDetails(invalidRows);
+          setError(`${details} (${invalidRows.length} invalid rows)`);
+        } else {
+          setError(details);
+        }
+        setStep("upload");
+        return;
+      }
+
       if (!res.ok) {
-        throw new Error(
-          payload?.details ||
-            payload?.error ||
-            `Transaction upload failed with status ${res.status}`,
-        );
+        const errMsg =
+          (payload?.details as string) ||
+          (payload?.error as string) ||
+          `Transaction upload failed with status ${res.status}`;
+        const code = payload?.code as string | undefined;
+        if (res.status === 500) {
+          setError(
+            `Server error (${code || "TRANSACTION_UPLOAD_FAILED"}): ${errMsg}`,
+          );
+        } else {
+          setError(errMsg);
+        }
+        setStep("upload");
+        return;
       }
 
       const newBatchId = payload?.batchId as string | undefined;
@@ -124,6 +162,7 @@ export default function TransactionImportPage() {
         batchId: newBatchId,
       });
 
+      // Navigate to preview after successful upload
       const previewRes = await fetch("/api/tally/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -166,14 +205,15 @@ export default function TransactionImportPage() {
   };
 
   const handleImport = async () => {
-    if (!preview || !batchId) return;
+    if (!batchId) return;
     setLoading(true);
     setStep("importing");
     try {
+      // Send only batchId — backend loads all valid staged rows
       const res = await fetch("/api/tally/import?execute=true", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ batchId, sourceFileName: fileName }),
+        body: JSON.stringify({ batchId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Import failed");
@@ -291,6 +331,22 @@ export default function TransactionImportPage() {
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
               {error}
+            </div>
+          )}
+          {invalidRowDetails.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <p className="font-semibold text-amber-800 text-sm mb-2">
+                Row validation details:
+              </p>
+              <ul className="space-y-1">
+                {invalidRowDetails.map((detail, idx) => (
+                  <li key={idx} className="text-xs text-amber-700">
+                    Row {detail.row}: <strong>{detail.field}</strong> —{" "}
+                    {detail.message}
+                    {detail.value ? ` (value: ${detail.value})` : ""}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
@@ -475,6 +531,7 @@ export default function TransactionImportPage() {
                 setPreview(null);
                 setResult(null);
                 setError("");
+                setInvalidRowDetails([]);
                 setBatchId(null);
                 setFileName("");
               }}

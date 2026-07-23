@@ -40,12 +40,13 @@ export async function GET(req: NextRequest) {
     prisma.creditLedger.count({ where }),
   ]);
 
-  // Summary — total pending across all credit sales
+  // Summary — total pending across all credit sales for active, non-deleted customers
   const summary = await prisma.sale.aggregate({
     where: {
       status: { in: ['COMPLETED', 'PARTIALLY_RETURNED'] },
       saleType: { in: ['CREDIT', 'PARTIAL'] },
       pendingAmount: { gt: 0 },
+      customer: { isActive: true, deletedAt: null },
     },
     _sum: { pendingAmount: true },
     _count: { _all: true },

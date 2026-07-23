@@ -143,9 +143,9 @@ export async function DELETE(
         where: { id },
         data: {
           isActive: false,
-          deletedAt: new Date(),
+          deletedAt: null, // Do NOT set deletedAt — that's for permanent soft-delete
           deletedBy: auth.userId,
-          deleteReason: reason,
+          deleteReason: reason || null,
         },
         select: {
           id: true,

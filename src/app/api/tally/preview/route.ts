@@ -1,28 +1,42 @@
+/**
+ * POST /api/tally/preview
+ *
+ * Generates a detailed preview of a transaction import batch.
+ * Fixed: duplicate detection excludes current batch, case-insensitive voucher type normalization.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { matchCustomer, buildCustomerLookup } from "@/features/import-export/matching";
+import { normalizeMobile } from "@/features/import-export/amount-parser";
 
+/**
+ * Normalize voucher type from source text - case-insensitive, handles aliases.
+ */
+function normalizeVoucherType(value: string): string | null {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, " ");
 
-interface TallyVoucherInput {
-  tallyGuid?: string;
-  tallyRemoteId?: string;
-  tallyMasterId?: string;
-  voucherKey?: string;
-  customerName: string;
-  mobile?: string;
-  voucherDate: string;
-  voucherType:
-    | "SALES"
-    | "RECEIPT"
-    | "DEBIT_NOTE"
-    | "CREDIT_NOTE"
-    | "OPENING_BALANCE";
-  voucherNumber?: string;
-  debit?: number;
-  credit?: number;
-  narration?: string;
-  reference?: string;
-  sourceFileName?: string;
+  const aliases: Record<string, string> = {
+    "sale": "SALES",
+    "sales": "SALES",
+    "sales invoice": "SALES",
+    "receipt": "RECEIPT",
+    "receipts": "RECEIPT",
+    "payment": "RECEIPT",
+    "payment received": "RECEIPT",
+    "debit note": "DEBIT_NOTE",
+    "debit": "DEBIT_NOTE",
+    "credit note": "CREDIT_NOTE",
+    "credit": "CREDIT_NOTE",
+    "journal": "JOURNAL",
+    "adjustment": "JOURNAL",
+    "opening balance": "OPENING_BALANCE",
+  };
+
+  return aliases[normalized] ?? null;
 }
 
 export async function POST(req: NextRequest) {
@@ -31,231 +45,139 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const batchId = (body.batchId ||
-      req.nextUrl.searchParams.get("batchId") ||
-      "") as string;
-    let vouchers: TallyVoucherInput[] = Array.isArray(body.vouchers)
-      ? body.vouchers
-      : [];
+    const batchId = (body.batchId || req.nextUrl.searchParams.get("batchId") || "") as string;
 
-    if (!vouchers.length && batchId) {
-      const persistedVouchers = await prisma.tallyVoucher.findMany({
-        where: { importBatchId: batchId },
-        select: {
-          customerName: true,
-          voucherDate: true,
-          voucherType: true,
-          voucherNumber: true,
-          debit: true,
-          credit: true,
-          narration: true,
-          reference: true,
-          tallyGuid: true,
-          tallyRemoteId: true,
-          tallyMasterId: true,
-          voucherKey: true,
-        },
-        orderBy: [{ createdAt: "asc" }],
-      });
+    // Load persisted vouchers from DB
+    const persistedVouchers = await prisma.tallyVoucher.findMany({
+      where: { importBatchId: batchId },
+      select: {
+        id: true,
+        customerName: true,
+        mobile: true,
+        voucherDate: true,
+        dueDate: true,
+        paymentDate: true,
+        voucherType: true,
+        voucherNumber: true,
+        againstVoucherNumber: true,
+        debit: true,
+        credit: true,
+        narration: true,
+        reference: true,
+        tallyGuid: true,
+        tallyRemoteId: true,
+        tallyMasterId: true,
+        voucherKey: true,
+        sourceFileName: true,
+        isDuplicate: true,
+        importStatus: true,
+        errorMessage: true,
+        matchedCustomerId: true,
+        matchedCustomerName: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
 
-      vouchers = persistedVouchers.map((voucher) => ({
-        customerName: voucher.customerName || "",
-        voucherDate: voucher.voucherDate.toISOString().slice(0, 10),
-        voucherType: voucher.voucherType as TallyVoucherInput["voucherType"],
-        voucherNumber: voucher.voucherNumber || undefined,
-        debit: Number(voucher.debit) || 0,
-        credit: Number(voucher.credit) || 0,
-        narration: voucher.narration || undefined,
-        reference: voucher.reference || undefined,
-        tallyGuid: voucher.tallyGuid || undefined,
-        tallyRemoteId: voucher.tallyRemoteId || undefined,
-        tallyMasterId: voucher.tallyMasterId || undefined,
-        voucherKey: voucher.voucherKey || undefined,
-      }));
-    }
-
-    if (!Array.isArray(vouchers) || vouchers.length === 0) {
+    if (!persistedVouchers.length) {
       return NextResponse.json(
-        { error: "vouchers array is required and must not be empty" },
+        { error: "No vouchers found for this batch" },
         { status: 400 },
       );
     }
 
+    // Load customers for matching
     const allCustomers = await prisma.customer.findMany({
-      select: { id: true, fullName: true, customerCode: true, mobile: true },
+      select: { id: true, fullName: true, customerCode: true, mobile: true, normalizedMobile: true },
     });
+    const customerLookup = buildCustomerLookup(allCustomers);
 
-    function normalizeName(name: string): string {
-      return name
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, "")
-        .trim();
+    // Get existing keys for duplicate detection — ONLY from COMPLETED/IMPORTED records, NOT current batch
+    const existingVouchers = await prisma.tallyVoucher.findMany({
+      select: { voucherKey: true, tallyGuid: true, tallyRemoteId: true, tallyMasterId: true },
+      where: {
+        importBatchId: { not: batchId },
+        importStatus: "IMPORTED",
+      },
+    });
+    const existingKeys = new Set<string>();
+    for (const v of existingVouchers) {
+      if (v.voucherKey) existingKeys.add(v.voucherKey);
+      if (v.tallyGuid) existingKeys.add(v.tallyGuid);
+      if (v.tallyRemoteId) existingKeys.add(v.tallyRemoteId);
+      if (v.tallyMasterId) existingKeys.add(v.tallyMasterId);
     }
 
-    function normalizeMobile(value: string): string {
-      return value.replace(/\D/g, "").trim();
-    }
-
-    const nameIndex = new Map<string, (typeof allCustomers)[number]>();
-    const mobileIndex = new Map<string, (typeof allCustomers)[number]>();
-    for (const customer of allCustomers) {
-      const key = normalizeName(customer.fullName);
-      if (!nameIndex.has(key)) {
-        nameIndex.set(key, customer);
-      }
-      if (customer.mobile) {
-        const mobileKey = normalizeMobile(customer.mobile);
-        if (!mobileIndex.has(mobileKey)) {
-          mobileIndex.set(mobileKey, customer);
-        }
-      }
-    }
-
-    const existingVoucherKeys = new Set<string>();
-    const existingGuids = new Set<string>();
-    const sourceKeys = vouchers
-      .map(
-        (voucher) =>
-          voucher.voucherKey ||
-          voucher.tallyGuid ||
-          voucher.tallyRemoteId ||
-          voucher.tallyMasterId,
-      )
-      .filter((value): value is string => Boolean(value));
-    if (sourceKeys.length > 0) {
-      const existing = await prisma.tallyVoucher.findMany({
-        where: {
-          importBatchId: batchId ? { not: batchId } : undefined,
-          OR: [
-            { voucherKey: { in: sourceKeys } },
-            {
-              tallyGuid: { in: sourceKeys.filter((value) => value.length > 0) },
-            },
-            {
-              tallyRemoteId: {
-                in: sourceKeys.filter((value) => value.length > 0),
-              },
-            },
-            {
-              tallyMasterId: {
-                in: sourceKeys.filter((value) => value.length > 0),
-              },
-            },
-          ],
-        },
-        select: {
-          voucherKey: true,
-          tallyGuid: true,
-          tallyRemoteId: true,
-          tallyMasterId: true,
-        },
-      });
-      for (const entry of existing) {
-        if (entry.voucherKey) existingVoucherKeys.add(entry.voucherKey);
-        if (entry.tallyGuid) existingGuids.add(entry.tallyGuid);
-      }
-    }
-
-    const matchedCustomersMap = new Map<
-      string,
-      {
-        customerId: string;
-        customerName: string;
-        customerCode: string;
-        vouchers: number;
-      }
-    >();
+    const matchedCustomersMap = new Map<string, {
+      customerId: string;
+      customerName: string;
+      customerCode: string;
+      vouchers: number;
+    }>();
     const unmatchedCustomerNames: string[] = [];
     const duplicateVouchers: Array<{
       customerName: string;
       voucherNumber?: string;
       voucherDate: string;
     }> = [];
-    const salesVouchers: Array<{
-      customerName: string;
-      amount: number;
-      voucherNumber?: string;
-    }> = [];
-    const receiptVouchers: Array<{
-      customerName: string;
-      amount: number;
-      voucherNumber?: string;
-    }> = [];
-    const customerClosings = new Map<
-      string,
-      { opening: number; debit: number; credit: number }
-    >();
-    let totalDebit = 0;
-    let totalCredit = 0;
+    const salesVouchers: Array<{ customerName: string; amount: number; voucherNumber?: string }> = [];
+    const receiptVouchers: Array<{ customerName: string; amount: number; voucherNumber?: string }> = [];
+    const customerClosings = new Map<string, { opening: number; debit: number; credit: number }>();
     let duplicateCount = 0;
-    let invalidRows = 0;
-    const seenVoucherKeys = new Set<string>();
+    let invalidCount = 0;
+    const seenKeysInBatch = new Set<string>();
 
-    for (const voucher of vouchers) {
-      if (
-        !voucher.customerName ||
-        !voucher.voucherDate ||
-        !voucher.voucherType
-      ) {
-        invalidRows++;
+    for (const voucher of persistedVouchers) {
+      // Skip rows that were already marked as invalid by upload
+      if (voucher.importStatus === "INVALID") {
+        invalidCount++;
         continue;
       }
 
-      const parsedDate = new Date(voucher.voucherDate);
-      if (Number.isNaN(parsedDate.getTime())) {
-        invalidRows++;
-        continue;
-      }
+      const normalizedType = normalizeVoucherType(voucher.voucherType || "");
+      const effectiveType = normalizedType || voucher.voucherType;
 
-      const sourceKey =
-        voucher.voucherKey ||
-        voucher.tallyGuid ||
-        voucher.tallyRemoteId ||
-        voucher.tallyMasterId;
-      if (
-        sourceKey &&
-        (existingVoucherKeys.has(sourceKey) || existingGuids.has(sourceKey))
-      ) {
-        duplicateCount++;
-        duplicateVouchers.push({
-          customerName: voucher.customerName,
-          voucherNumber: voucher.voucherNumber,
-          voucherDate: voucher.voucherDate,
-        });
-        continue;
-      }
-      if (sourceKey && seenVoucherKeys.has(sourceKey)) {
-        duplicateCount++;
-        duplicateVouchers.push({
-          customerName: voucher.customerName,
-          voucherNumber: voucher.voucherNumber,
-          voucherDate: voucher.voucherDate,
-        });
-        continue;
-      }
+      // Duplicate detection against permanent COMPLETED records
+      const sourceKey = voucher.voucherKey || voucher.tallyGuid || voucher.tallyRemoteId || voucher.tallyMasterId;
+      let isDuplicate = false;
       if (sourceKey) {
-        seenVoucherKeys.add(sourceKey);
-      }
-
-      let matchedCustomer = undefined as
-        | (typeof allCustomers)[number]
-        | undefined;
-      if (voucher.mobile) {
-        matchedCustomer = mobileIndex.get(normalizeMobile(voucher.mobile));
-      }
-
-      const normalizedInput = normalizeName(voucher.customerName);
-      if (!matchedCustomer) {
-        matchedCustomer = nameIndex.get(normalizedInput);
-      }
-
-      if (!matchedCustomer) {
-        for (const [key, customer] of nameIndex) {
-          if (key.includes(normalizedInput) || normalizedInput.includes(key)) {
-            matchedCustomer = customer;
-            break;
-          }
+        if (existingKeys.has(sourceKey) || seenKeysInBatch.has(sourceKey)) {
+          isDuplicate = true;
         }
+        seenKeysInBatch.add(sourceKey);
+      }
+
+      if (isDuplicate) {
+        duplicateCount++;
+        duplicateVouchers.push({
+          customerName: voucher.customerName || "",
+          voucherNumber: voucher.voucherNumber || undefined,
+          voucherDate: voucher.voucherDate.toISOString().slice(0, 10),
+        });
+        continue;
+      }
+
+      // Customer matching
+      let matchedCustomer: (typeof allCustomers)[number] | undefined;
+      if (voucher.mobile) {
+        const normalizedMob = normalizeMobile(voucher.mobile);
+        if (normalizedMob) {
+          matchedCustomer = allCustomers.find(
+            (c) => c.mobile === normalizedMob || c.normalizedMobile === normalizedMob,
+          );
+        }
+      }
+      if (!matchedCustomer && voucher.customerName) {
+        const normalizedName = voucher.customerName.toLowerCase().replace(/[^a-z0-9]/g, "");
+        matchedCustomer = allCustomers.find(
+          (c) => c.fullName.toLowerCase().replace(/[^a-z0-9]/g, "") === normalizedName,
+        );
+      }
+      if (!matchedCustomer && voucher.customerName) {
+        const normalizedName = voucher.customerName.toLowerCase().replace(/[^a-z0-9]/g, "");
+        matchedCustomer = allCustomers.find((c) =>
+          c.fullName.toLowerCase().replace(/[^a-z0-9]/g, "").includes(normalizedName) ||
+          normalizedName.includes(c.fullName.toLowerCase().replace(/[^a-z0-9]/g, "")),
+        );
       }
 
       if (matchedCustomer) {
@@ -284,35 +206,27 @@ export async function POST(req: NextRequest) {
         }
 
         const closing = customerClosings.get(matchedCustomer.id)!;
-        if (
-          voucher.voucherType === "SALES" ||
-          voucher.voucherType === "DEBIT_NOTE"
-        ) {
-          closing.debit += voucher.debit || 0;
-          totalDebit += voucher.debit || 0;
-          if (voucher.voucherType === "SALES") {
+        if (effectiveType === "SALES" || effectiveType === "DEBIT_NOTE") {
+          closing.debit += Number(voucher.debit) || 0;
+          if (effectiveType === "SALES") {
             salesVouchers.push({
-              customerName: voucher.customerName,
-              amount: voucher.debit || 0,
-              voucherNumber: voucher.voucherNumber,
+              customerName: voucher.customerName || "",
+              amount: Number(voucher.debit) || 0,
+              voucherNumber: voucher.voucherNumber || undefined,
             });
           }
-        } else if (
-          voucher.voucherType === "RECEIPT" ||
-          voucher.voucherType === "CREDIT_NOTE"
-        ) {
-          closing.credit += voucher.credit || 0;
-          totalCredit += voucher.credit || 0;
-          if (voucher.voucherType === "RECEIPT") {
+        } else if (effectiveType === "RECEIPT" || effectiveType === "CREDIT_NOTE") {
+          closing.credit += Number(voucher.credit) || 0;
+          if (effectiveType === "RECEIPT") {
             receiptVouchers.push({
-              customerName: voucher.customerName,
-              amount: voucher.credit || 0,
-              voucherNumber: voucher.voucherNumber,
+              customerName: voucher.customerName || "",
+              amount: Number(voucher.credit) || 0,
+              voucherNumber: voucher.voucherNumber || undefined,
             });
           }
         }
       } else {
-        unmatchedCustomerNames.push(voucher.customerName);
+        unmatchedCustomerNames.push(voucher.customerName || "");
       }
     }
 
@@ -335,15 +249,19 @@ export async function POST(req: NextRequest) {
 
     console.info("[tally/preview] previewed", {
       batchId,
-      totalVouchers: vouchers.length,
+      totalVouchers: persistedVouchers.length,
       matchedCustomers: matchedCustomers.length,
-      invalidRows,
+      unmatchedCustomers: [...new Set(unmatchedCustomerNames)].length,
+      duplicateCount,
+      invalidCount,
+      salesCount: salesVouchers.length,
+      receiptCount: receiptVouchers.length,
     });
 
     return NextResponse.json({
       ok: true,
       batchId,
-      totalVouchers: vouchers.length,
+      totalVouchers: persistedVouchers.length,
       sales: salesVouchers.length,
       receipts: receiptVouchers.length,
       debitNotes: 0,
@@ -351,38 +269,40 @@ export async function POST(req: NextRequest) {
       matchedCustomers,
       unmatchedCustomerNames: [...new Set(unmatchedCustomerNames)].sort(),
       duplicateCount,
-      invalidCount: invalidRows,
+      invalidCount,
       duplicateVouchers: duplicateVouchers.slice(0, 50),
       customerClosings: customerClosingsList.sort((a, b) =>
         a.customerName.localeCompare(b.customerName),
       ),
-      sampleVouchers: vouchers.slice(0, 20),
+      sampleVouchers: persistedVouchers.slice(0, 20).map((v) => ({
+        customerName: v.customerName,
+        voucherDate: v.voucherDate.toISOString().slice(0, 10),
+        voucherType: v.voucherType,
+        voucherNumber: v.voucherNumber,
+        debit: Number(v.debit),
+        credit: Number(v.credit),
+      })),
       summary: {
-        totalVouchers: vouchers.length,
+        totalVouchers: persistedVouchers.length,
         sales: salesVouchers.length,
         receipts: receiptVouchers.length,
         debitNotes: 0,
         creditNotes: 0,
         matchedCustomers: matchedCustomers.length,
         unmatchedCustomers: [...new Set(unmatchedCustomerNames)].length,
-        debitTotal: totalDebit,
-        creditTotal: totalCredit,
+        debitTotal: salesVouchers.reduce((s, v) => s + v.amount, 0),
+        creditTotal: receiptVouchers.reduce((s, v) => s + v.amount, 0),
         duplicateVouchers: duplicateCount,
-        invalidRows,
+        invalidRows: invalidCount,
       },
-      warnings: invalidRows > 0 ? [`${invalidRows} invalid rows found`] : [],
+      warnings: invalidCount > 0 ? [`${invalidCount} invalid rows found`] : [],
     });
   } catch (err) {
-    console.error("Transaction import failed", {
-      stage: "preview",
+    console.error("[tally/preview]", {
       message: err instanceof Error ? err.message : "Unknown error",
     });
     return NextResponse.json(
-      {
-        error: "Server error processing preview",
-        details:
-          "The preview could not be generated from the uploaded transactions.",
-      },
+      { error: "Server error processing preview", details: "The preview could not be generated." },
       { status: 500 },
     );
   }

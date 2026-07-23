@@ -11,6 +11,7 @@ import {
   Trash2,
   ShieldAlert,
   AlertTriangle,
+  AlertOctagon,
 } from "lucide-react";
 
 interface Settings {
@@ -100,6 +101,29 @@ export default function SettingsPage() {
   const [confirmationText, setConfirmationText] = useState("");
   const [reason, setReason] = useState("");
   const [understood, setUnderstood] = useState(false);
+
+  // ─── Delete All Business Data states ──────────────────────────────────────
+  const [showDataResetDialog, setShowDataResetDialog] = useState(false);
+  const [dataResetPreview, setDataResetPreview] = useState<Record<string, number> | null>(null);
+  const [dataResetPreviewLoading, setDataResetPreviewLoading] = useState(false);
+  const [dataResetConfirmation, setDataResetConfirmation] = useState("");
+  const [dataResetReason, setDataResetReason] = useState("");
+  const [dataResetAcknowledged, setDataResetAcknowledged] = useState(false);
+  const [dataResetExecuting, setDataResetExecuting] = useState(false);
+  const [dataResetMessage, setDataResetMessage] = useState<string | null>(null);
+  const [dataResetError, setDataResetError] = useState<string | null>(null);
+  const [dataResetDownloadBackup, setDataResetDownloadBackup] = useState(false);
+  const [dataResetComplete, setDataResetComplete] = useState(false);
+  const [dataResetResult, setDataResetResult] = useState<Record<string, unknown> | null>(null);
+  const [dataResetPreviewCounts, setDataResetPreviewCounts] = useState<Record<string, number> | null>(null);
+  const [dataResetShowPreview, setDataResetShowPreview] = useState(true);
+  const [dataResetExecuted, setDataResetExecuted] = useState(false);
+  const [dataResetVerification, setDataResetVerification] = useState<Record<string, unknown> | null>(null);
+  const [dataResetDeletedCounts, setDataResetDeletedCounts] = useState<Record<string, number> | null>(null);
+  const [dataResetStep, setDataResetStep] = useState<"idle" | "preview" | "confirm" | "done">("idle");
+  const [dataResetDeletionDone, setDataResetDeletionDone] = useState(false);
+  const [dataResetBackupDownloaded, setDataResetBackupDownloaded] = useState(false);
+  const [dataResetBackupLoading, setDataResetBackupLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -435,6 +459,89 @@ export default function SettingsPage() {
               </span>
             </button>
           </div>
+
+          {/* ─── Delete All Business Data ─────────────────────────────────── */}
+          <div className="border-t border-red-200 pt-4 mt-2">
+            <div className="flex items-start gap-3 mb-3">
+              <div className="rounded-xl bg-red-100 p-2 text-red-700">
+                <AlertOctagon className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  Dangerous Zone — Delete All Business Data
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Permanently delete ALL customers, invoices, payments, ledger
+                  records, balances, and import data. This action cannot be
+                  undone. Admin users and settings are preserved.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setShowDataResetDialog(true);
+                setDataResetStep("idle");
+                setDataResetPreview(null);
+                setDataResetConfirmation("");
+                setDataResetReason("");
+                setDataResetAcknowledged(false);
+                setDataResetMessage(null);
+                setDataResetError(null);
+                setDataResetDeletionDone(false);
+                setDataResetBackupDownloaded(false);
+                setDataResetPreviewCounts(null);
+                setDataResetDeletedCounts(null);
+                setDataResetVerification(null);
+                setDataResetExecuted(false);
+                setDataResetComplete(false);
+                setDataResetResult(null);
+                setDataResetShowPreview(true);
+                setDataResetExecuting(false);
+                setDataResetBackupLoading(false);
+                // Load preview immediately
+                setDataResetPreviewLoading(true);
+                fetch("/api/admin/data-reset", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    action: "DELETE_ALL_BUSINESS_DATA",
+                    mode: "preview",
+                    confirmation: "",
+                    reason: "preview",
+                    acknowledged: false,
+                  }),
+                })
+                  .then((r) => r.json())
+                  .then((d) => {
+                    if (d.success && d.data) {
+                      setDataResetPreview(d.data);
+                      setDataResetPreviewCounts({
+                        customers: d.data.customers ?? 0,
+                        invoices: d.data.invoices ?? 0,
+                        payments: d.data.payments ?? 0,
+                        ledgerEntries: d.data.ledgerEntries ?? 0,
+                        ledgerTransactions: d.data.ledgerTransactions ?? 0,
+                        balances: d.data.balances ?? 0,
+                        importBatches: d.data.importBatches ?? 0,
+                        stagingRows: d.data.stagingRows ?? 0,
+                      });
+                      setDataResetStep("preview");
+                    } else {
+                      setDataResetError(d.error || "Preview failed");
+                    }
+                  })
+                  .catch((err) => {
+                    setDataResetError(err.message || "Preview failed");
+                  })
+                  .finally(() => setDataResetPreviewLoading(false));
+              }}
+              className="flex items-center gap-2 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-3 text-left font-semibold text-red-700 transition hover:border-red-500 hover:bg-red-100"
+            >
+              <AlertOctagon className="h-5 w-5" />
+              <span>Delete All Business Data</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -751,6 +858,324 @@ export default function SettingsPage() {
                       : "Confirm Delete"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Delete All Business Data Dialog ──────────────────────────────── */}
+      {showDataResetDialog && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-red-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-red-200 bg-red-50 px-5 py-4">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-red-100 p-2 text-red-700">
+                  <AlertOctagon className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-slate-900">
+                    Delete All Business Data
+                  </h3>
+                  <p className="text-sm text-red-600">
+                    This action is irreversible. All business records will be
+                    permanently deleted.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDataResetDialog(false);
+                  setDataResetConfirmation("");
+                  setDataResetReason("");
+                  setDataResetAcknowledged(false);
+                  setDataResetMessage(null);
+                  setDataResetError(null);
+                }}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5 max-h-[70vh] overflow-y-auto">
+              {/* Error */}
+              {dataResetError && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  {dataResetError}
+                </div>
+              )}
+
+              {/* Success message */}
+              {dataResetMessage && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                  {dataResetMessage}
+                </div>
+              )}
+
+              {/* Preview Loading */}
+              {dataResetPreviewLoading && (
+                <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading preview…
+                </div>
+              )}
+
+              {/* Preview Counts */}
+              {dataResetPreviewCounts && !dataResetDeletionDone && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+                  <p className="mb-2 text-sm font-semibold text-red-800">
+                    ⚠️ This action will permanently delete all customers,
+                    invoices, payments, ledger records, balances and import
+                    data. This cannot be undone.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 text-sm text-red-700">
+                    <span>Customers: {dataResetPreviewCounts.customers}</span>
+                    <span>Invoices: {dataResetPreviewCounts.invoices}</span>
+                    <span>Payments: {dataResetPreviewCounts.payments}</span>
+                    <span>Ledger Entries: {dataResetPreviewCounts.ledgerEntries}</span>
+                    <span>Ledger Transactions: {dataResetPreviewCounts.ledgerTransactions}</span>
+                    <span>Balances: {dataResetPreviewCounts.balances}</span>
+                    <span>Import Batches: {dataResetPreviewCounts.importBatches}</span>
+                    <span>Staging Rows: {dataResetPreviewCounts.stagingRows}</span>
+                  </div>
+                  <p className="mt-2 text-xs text-red-600">
+                    Blocked: 0 — All financial references will be deleted as
+                    part of this action.
+                  </p>
+                </div>
+              )}
+
+              {/* Deletion Result */}
+              {dataResetDeletionDone && dataResetDeletedCounts && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <p className="mb-2 text-sm font-semibold text-emerald-800">
+                    ✅ All business data has been permanently deleted.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 text-sm text-emerald-700">
+                    <span>Customers deleted: {dataResetDeletedCounts.customers}</span>
+                    <span>Invoices deleted: {dataResetDeletedCounts.invoices}</span>
+                    <span>Payments deleted: {dataResetDeletedCounts.payments}</span>
+                    <span>Ledger entries deleted: {dataResetDeletedCounts.ledgerEntries}</span>
+                    <span>Ledger transactions deleted: {dataResetDeletedCounts.ledgerTransactions}</span>
+                    <span>Import batches deleted: {dataResetDeletedCounts.importBatches}</span>
+                    <span>Staging rows deleted: {dataResetDeletedCounts.stagingRows}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Verification */}
+              {dataResetDeletionDone && dataResetVerification && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+                  <p className="mb-2 text-sm font-semibold text-blue-800">
+                    🔍 Post-deletion verification
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 text-sm text-blue-700">
+                    <span>Customers remaining: {String(dataResetVerification.customersRemaining ?? "?")}</span>
+                    <span>Financial records remaining: {String(dataResetVerification.financialRecordsRemaining ?? "?")}</span>
+                    <span>Orphan records: {String(dataResetVerification.orphanRecordsRemaining ?? "?")}</span>
+                    <span>Admin users remaining: {String(dataResetVerification.adminUsersRemaining ?? "?")}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Confirmation Form — only show before deletion */}
+              {!dataResetDeletionDone && !dataResetPreviewLoading && (
+                <>
+                  {/* Backup Option */}
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <label className="flex items-start gap-2 text-sm text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={dataResetBackupDownloaded}
+                        onChange={(e) => setDataResetBackupDownloaded(e.target.checked)}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="font-semibold text-slate-700">
+                          Download backup before deletion
+                        </span>
+                        <br />
+                        A JSON file containing all customers, invoices,
+                        payments, ledger entries, and import data will be
+                        downloaded before deletion proceeds.
+                      </span>
+                    </label>
+                    {dataResetBackupDownloaded && !dataResetBackupLoading && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setDataResetBackupLoading(true);
+                          try {
+                            const res = await fetch("/api/admin/data-reset");
+                            if (!res.ok) throw new Error("Backup download failed");
+                            const blob = await res.blob();
+                            const url = window.URL.createObjectURL(blob);
+                            const anchor = document.createElement("a");
+                            anchor.href = url;
+                            anchor.download = `business-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                            document.body.appendChild(anchor);
+                            anchor.click();
+                            anchor.remove();
+                            window.URL.revokeObjectURL(url);
+                            setDataResetMessage("Backup downloaded successfully.");
+                          } catch (err) {
+                            setDataResetError(
+                              err instanceof Error
+                                ? err.message
+                                : "Backup download failed",
+                            );
+                          } finally {
+                            setDataResetBackupLoading(false);
+                          }
+                        }}
+                        className="mt-2 rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100"
+                      >
+                        {dataResetBackupLoading ? (
+                          <>
+                            <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
+                            Downloading…
+                          </>
+                        ) : (
+                          "Download Backup Now"
+                        )}
+                      </button>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Reason <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      value={dataResetReason}
+                      onChange={(e) => setDataResetReason(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-red-500 outline-none"
+                      placeholder="Enter a reason for this destructive action"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Type{" "}
+                      <span className="font-mono text-red-600">
+                        DELETE ALL BUSINESS DATA
+                      </span>{" "}
+                      to confirm <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      value={dataResetConfirmation}
+                      onChange={(e) => setDataResetConfirmation(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-red-500 outline-none"
+                      placeholder="DELETE ALL BUSINESS DATA"
+                    />
+                  </div>
+
+                  <label className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
+                    <input
+                      type="checkbox"
+                      checked={dataResetAcknowledged}
+                      onChange={(e) => setDataResetAcknowledged(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      I acknowledge that this action is irreversible and all
+                      business data will be permanently deleted. Admin users,
+                      login credentials, and application settings will be
+                      preserved.
+                    </span>
+                  </label>
+                </>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-slate-200 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDataResetDialog(false);
+                  setDataResetConfirmation("");
+                  setDataResetReason("");
+                  setDataResetAcknowledged(false);
+                  setDataResetMessage(null);
+                  setDataResetError(null);
+                }}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+              >
+                {dataResetDeletionDone ? "Close" : "Cancel"}
+              </button>
+
+              {!dataResetDeletionDone && (
+                <button
+                  type="button"
+                  disabled={
+                    dataResetExecuting ||
+                    dataResetConfirmation !== "DELETE ALL BUSINESS DATA" ||
+                    dataResetReason.trim().length === 0 ||
+                    !dataResetAcknowledged
+                  }
+                  onClick={async () => {
+                    setDataResetExecuting(true);
+                    setDataResetError(null);
+                    setDataResetMessage(null);
+
+                    try {
+                      const res = await fetch("/api/admin/data-reset", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          action: "DELETE_ALL_BUSINESS_DATA",
+                          mode: "execute",
+                          confirmation: dataResetConfirmation,
+                          reason: dataResetReason,
+                          acknowledged: dataResetAcknowledged,
+                        }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) {
+                        throw new Error(data.error || "Deletion failed");
+                      }
+
+                      if (data.success && data.data) {
+                        setDataResetDeletedCounts(data.data.deleted);
+                        setDataResetVerification(data.data.verification);
+                        setDataResetDeletionDone(true);
+                        setDataResetMessage(
+                          "All business data has been permanently deleted.",
+                        );
+
+                        // Refresh the page after a short delay to clear all caches
+                        setTimeout(() => {
+                          window.location.reload();
+                        }, 2000);
+                      } else {
+                        throw new Error(data.error || "Unexpected response");
+                      }
+                    } catch (err) {
+                      setDataResetError(
+                        err instanceof Error
+                          ? err.message
+                          : "Deletion failed",
+                      );
+                    } finally {
+                      setDataResetExecuting(false);
+                    }
+                  }}
+                  className="flex items-center gap-2 rounded-lg bg-red-600 px-5 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {dataResetExecuting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Deleting…
+                    </>
+                  ) : (
+                    <>
+                      <AlertOctagon className="h-4 w-4" />
+                      Permanently Delete All Business Data
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>

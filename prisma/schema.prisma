@@ -546,7 +546,7 @@ model TallyVoucher {
   id                  String   @id @default(cuid())
   importBatchId       String
   importBatch         TallyImportBatch @relation(fields: [importBatchId], references: [id])
-  tallyGuid           String?  @unique
+  tallyGuid           String?
   tallyRemoteId       String?
   tallyMasterId       String?
   voucherKey          String?
@@ -558,8 +558,12 @@ model TallyVoucher {
   matchedCustomerId   String?
   matchedCustomerName String?
   voucherDate         DateTime
+  dueDate             DateTime?
+  paymentDate         DateTime?
   voucherType         String   // 'SALES' | 'RECEIPT' | 'DEBIT_NOTE' | 'CREDIT_NOTE' | 'OPENING_BALANCE'
   voucherNumber       String?
+  againstVoucherNumber String?
+  paymentStatus       String?
   debit               Decimal  @default(0) @db.Decimal(14, 2)
   credit              Decimal  @default(0) @db.Decimal(14, 2)
   narration           String?
@@ -577,6 +581,9 @@ model TallyVoucher {
   @@index([voucherDate])
   @@index([voucherKey])
   @@index([importStatus])
+  @@index([dueDate])
+  @@index([againstVoucherNumber])
+  @@index([importBatchId, importStatus])
 }
 
 model CustomerLedgerTransaction {
@@ -584,8 +591,10 @@ model CustomerLedgerTransaction {
   customerId      String
   customer        Customer @relation(fields: [customerId], references: [id])
   transactionDate DateTime
+  dueDate         DateTime?
   voucherType     String
   voucherNumber   String?
+  againstReference String?
   particulars     String
   debit           Decimal  @default(0) @db.Decimal(14, 2)
   credit          Decimal  @default(0) @db.Decimal(14, 2)
@@ -603,5 +612,5 @@ model CustomerLedgerTransaction {
   @@index([importBatchId])
   @@index([sourceGuid])
   @@index([sourceRemoteId])
-  @@unique([sourceSystem, sourceGuid])
+  // @@unique([sourceSystem, sourceGuid])  // removed: multiple rows with same sourceSystem + null sourceGuid caused silent failures
 }

@@ -31,8 +31,12 @@ export interface TallyVoucherInput {
   customerName: string;
   mobile?: string;
   voucherDate: string; // ISO date string YYYY-MM-DD
+  dueDate?: string;
+  paymentDate?: string;
   voucherType: TallyVoucherType;
   voucherNumber?: string;
+  againstVoucherNumber?: string;
+  paymentStatus?: string;
   debit: number;
   credit: number;
   narration?: string;
@@ -398,9 +402,9 @@ export function parseTallyXml(
 }
 
 /**
- * Validate a parsed voucher array and return a summary.
+ * Parse a CSV row into cells, handling quoted fields.
  */
-function parseCsvRow(line: string): string[] {
+export function parseCsvRow(line: string): string[] {
   const cells: string[] = [];
   let current = "";
   let inQuotes = false;
@@ -419,7 +423,11 @@ function parseCsvRow(line: string): string[] {
   return cells;
 }
 
-function normalizeHeader(value: string): string {
+/**
+ * Normalize a CSV header value.
+ * Strips UTF-8 BOM, trims, lowercases, and collapses whitespace.
+ */
+export function normalizeHeader(value: string): string {
   return value
     .replace(/^\uFEFF/, "")
     .trim()
@@ -506,13 +514,21 @@ export function parseTallyCsv(
     "effective date": "voucherDate",
     "transaction date": "voucherDate",
     transactiondate: "voucherDate",
+    "due date": "dueDate",
+    duedate: "dueDate",
+    "payment date": "paymentDate",
+    paymentdate: "paymentDate",
     "voucher number": "voucherNumber",
     "voucher type": "voucherType",
     vouchertype: "voucherType",
     type: "voucherType",
+    "against voucher number": "againstVoucherNumber",
+    againstvouchernumber: "againstVoucherNumber",
     particulars: "particulars",
     narration: "narration",
     reference: "reference",
+    "payment status": "paymentStatus",
+    paymentstatus: "paymentStatus",
     debit: "debit",
     credit: "credit",
     "source entry key": "voucherKey",
@@ -559,6 +575,10 @@ export function parseTallyCsv(
       ""
     ).trim();
     const reference = (cells[indexByKey.get("reference") ?? -1] || "").trim();
+    const dueDateRaw = (cells[indexByKey.get("dueDate") ?? -1] || "").trim();
+    const paymentDateRaw = (cells[indexByKey.get("paymentDate") ?? -1] || "").trim();
+    const againstVoucherNumber = (cells[indexByKey.get("againstVoucherNumber") ?? -1] || "").trim();
+    const paymentStatus = (cells[indexByKey.get("paymentStatus") ?? -1] || "").trim();
     const debitValue = parseNumericValue(
       cells[indexByKey.get("debit") ?? -1] || "",
     );
@@ -579,6 +599,10 @@ export function parseTallyCsv(
     const normalizedDate =
       parseStrictDate(voucherDate) || normalizeDate(voucherDate);
     if (!normalizedDate) continue;
+
+    // Parse due date and payment date
+    const dueDate = dueDateRaw ? (parseStrictDate(dueDateRaw) || normalizeDate(dueDateRaw)) : undefined;
+    const paymentDate = paymentDateRaw ? (parseStrictDate(paymentDateRaw) || normalizeDate(paymentDateRaw)) : undefined;
 
     const debit = debitValue ?? 0;
     const credit = creditValue ?? 0;
@@ -601,8 +625,12 @@ export function parseTallyCsv(
       customerName,
       mobile: mobile || undefined,
       voucherDate: normalizedDate,
+      dueDate: dueDate || undefined,
+      paymentDate: paymentDate || undefined,
       voucherType: normalizedType,
       voucherNumber: voucherNumber || undefined,
+      againstVoucherNumber: againstVoucherNumber || undefined,
+      paymentStatus: paymentStatus || undefined,
       debit,
       credit,
       narration: narration || undefined,

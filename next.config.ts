@@ -1,5 +1,12 @@
 import type { NextConfig } from 'next';
 
+const isDevelopment = process.env.NODE_ENV === 'development';
+
+// Environment-aware Content Security Policy
+const connectSrc = isDevelopment
+  ? "'self' http: https: ws: wss:"
+  : "'self' https: wss:";
+
 const nextConfig: NextConfig = {
   async headers() {
     return [
@@ -18,7 +25,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com data:",
               "img-src 'self' data: blob:",
-              "connect-src 'self'",
+              `connect-src ${connectSrc}`,
               "frame-ancestors 'none'",
             ].join('; '),
           },
