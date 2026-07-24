@@ -73,28 +73,40 @@ export interface OverdueDataResponse {
 }
 
 // ─── Resolve original bill date from a Sale record ─────────────────────────
-// Priority:
-// 1. createdAt (the Sale's creation date, which for imported records
-//    is set to the original voucherDate from Tally)
-// 2. There is no separate transactionDate, invoiceDate, or billDate field
-//    on the Sale model, so createdAt is the authoritative bill date.
-//
-// IMPORTANT: When importing from Tally, the Sale record's createdAt is set
-// to voucherDate (the original Tally bill date), NOT the import timestamp.
-// See src/app/api/tally/import/route.ts lines 155: createdAt: voucherDate
-
-function getBillDateFromSale(sale: {
-  createdAt: Date;
-}): Date | null {
-  // createdAt is the authoritative bill date for imported Sales
-  // because the import process sets createdAt = voucherDate
+function getBillDateFromSale(sale: { createdAt: Date }): Date | null {
   if (sale.createdAt) {
     return sale.createdAt;
   }
   return null;
 }
 
+/**
+ * Get total CreditLedger receipts (PAYMENT_RECEIVED) per customer.
+ * This is the canonical source - more complete than the Payment table
+ * which may be missing entries from import.
+ */
+async function getCanonicalReceiptsByCustomer(
+  customerIds: string[]
+): Promise<Map<string, Decimal>> {
+  const receipts = await prisma.creditLedger.groupBy({
+    by: ["customerId"],
+    where: {
+      customerId: { in: customerIds },
+      transactionType: "PAYMENT_RECEIVED",
+    },
+    _sum: { amount: true },
+  });
+
+  const result = new Map<string, Decimal>();
+  for (const r of receipts) {
+    result.set(r.customerId, r._sum.amount ?? new Decimal(0));
+  }
+  return result;
+}
+
 // ─── Get all Sales with outstanding amounts and their FIFO-allocated payments ──
+// Uses CreditLedger PAYMENT_RECEIVED total as the canonical receipt source,
+// then applies FIFO allocation across invoices.
 
 export async function getSalesWithFifoAllocation(): Promise<{
   sales: Array<{
@@ -120,7 +132,7 @@ export async function getSalesWithFifoAllocation(): Promise<{
 }> {
   const istToday = getISTStartOfToday();
 
-  // Get all credit sales with pending amounts for active (non-deleted) customers
+  // Get all credit sales for active customers
   const sales = await prisma.sale.findMany({
     where: {
       status: { in: ["COMPLETED", "PARTIALLY_RETURNED"] },
@@ -146,8 +158,18 @@ export async function getSalesWithFifoAllocation(): Promise<{
     orderBy: { createdAt: "asc" },
   });
 
-  // Get all completed payments in one batch for FIFO allocation
+  // Get unique customer IDs
   const customerIds = [...new Set(sales.map((s) => s.customerId).filter(Boolean))] as string[];
+
+  // CANONICAL SOURCE: Get receipts from CreditLedger instead of Payment table
+  const canonicalReceipts = await getCanonicalReceiptsByCustomer(customerIds);
+
+  // Also get direct payment allocations (for against-voucher matching)
+  const directAllocationsByCustomer = new Map<string, Map<string, Decimal>>();
+  for (const cid of customerIds) {
+    directAllocationsByCustomer.set(cid, new Map());
+  }
+
   const payments = await prisma.payment.findMany({
     where: {
       customerId: { in: customerIds },
@@ -156,19 +178,30 @@ export async function getSalesWithFifoAllocation(): Promise<{
     orderBy: { paymentDate: "asc" },
   });
 
-  // Group payments by customerId
-  const paymentsByCustomer = new Map<string, typeof payments>();
+  // Build direct allocation map from Payment table (for against-voucher matching)
   for (const payment of payments) {
-    const cid = payment.customerId;
-    if (!paymentsByCustomer.has(cid)) {
-      paymentsByCustomer.set(cid, []);
+    const allocMap = directAllocationsByCustomer.get(payment.customerId);
+    if (!allocMap) continue;
+
+    if (payment.saleId) {
+      const existing = allocMap.get(payment.saleId) ?? new Decimal(0);
+      allocMap.set(payment.saleId, existing.add(payment.amount));
+    } else {
+      const againstMatch = payment.notes?.match(/against\s+(\S+)/i);
+      if (againstMatch) {
+        const ref = againstMatch[1];
+        const sale = sales.find((s) => s.customerId === payment.customerId && s.invoiceNumber === ref);
+        if (sale) {
+          const existing = allocMap.get(sale.id) ?? new Decimal(0);
+          allocMap.set(sale.id, existing.add(payment.amount));
+        }
+      }
     }
-    paymentsByCustomer.get(cid)!.push(payment);
   }
 
-  // Group sales by customerId
+  // Group sales by customer
   const salesByCustomer = new Map<string, typeof sales>();
-  for ( const sale of sales) {
+  for (const sale of sales) {
     if (!sale.customerId) continue;
     const cid = sale.customerId;
     if (!salesByCustomer.has(cid)) {
@@ -177,7 +210,7 @@ export async function getSalesWithFifoAllocation(): Promise<{
     salesByCustomer.get(cid)!.push(sale);
   }
 
-  // Apply FIFO per customer
+  // Apply FIFO per customer using CreditLedger canonical receipts
   const resultSales: Array<{
     id: string;
     invoiceNumber: string;
@@ -198,75 +231,55 @@ export async function getSalesWithFifoAllocation(): Promise<{
   }> = [];
 
   for (const [cid, customerSales] of salesByCustomer) {
-    const customerPayments = paymentsByCustomer.get(cid) ?? [];
+    const directAllocMap = directAllocationsByCustomer.get(cid) ?? new Map();
+    const totalReceipts = canonicalReceipts.get(cid) ?? new Decimal(0);
 
-    // Step 1: Build direct allocation map (by saleId or againstReference)
-    const directlyAllocated = new Map<string, Decimal>();
-    for (const payment of customerPayments) {
-      if (payment.saleId) {
-        const sale = customerSales.find((s) => s.id === payment.saleId);
-        if (sale) {
-          const existing = directlyAllocated.get(sale.id) ?? new Decimal(0);
-          directlyAllocated.set(sale.id, existing.add(payment.amount));
-        }
-      } else {
-        const againstMatch = payment.notes?.match(/against\s+(\S+)/i);
-        if (againstMatch) {
-          const ref = againstMatch[1];
-          const sale = customerSales.find((s) => s.invoiceNumber === ref);
-          if (sale) {
-            const existing = directlyAllocated.get(sale.id) ?? new Decimal(0);
-            directlyAllocated.set(sale.id, existing.add(payment.amount));
-          }
-        }
-      }
-    }
-
-    // Step 2: Calculate remaining after direct allocation
+    // Step 1: Calculate each sale's remaining after direct allocation
     const salesWithDirect = customerSales.map((sale) => {
-      const directAlloc = directlyAllocated.get(sale.id) ?? new Decimal(0);
-      const pending = new Decimal(sale.grandTotal).sub(
-        new Decimal(sale.paidAmount).add(directAlloc),
-      );
-      const remaining = Decimal.max(pending, new Decimal(0));
-
+      const directAlloc = directAllocMap.get(sale.id) ?? new Decimal(0);
       const billDate = getBillDateFromSale(sale);
       const effectiveDueDate = billDate ? getOverdueDate(billDate) : istToday;
 
       return {
         ...sale,
-        remainingAfterAllocation: remaining,
+        remainingAfterAllocation: new Decimal(sale.grandTotal).sub(directAlloc),
+        directAlloc,
+        receiptApplied: new Decimal(0),
         effectiveDueDate,
         billDate,
       };
     });
 
-    // Step 3: FIFO — apply unlinked payments to oldest unpaid sales first
-    const unlinkedPayments = customerPayments.filter(
-      (p) => !p.saleId && !directlyAllocated.has(p.id),
+    // Step 2: Calculate total allocated directly
+    const totalDirectlyAllocated = [...salesWithDirect].reduce(
+      (sum, s) => sum.add(s.directAlloc),
+      new Decimal(0),
     );
 
-    for (const payment of unlinkedPayments) {
-      let remainingCredit = new Decimal(payment.amount);
-      for (const saleRecord of salesWithDirect) {
-        if (remainingCredit.lte(0)) break;
-        if (saleRecord.remainingAfterAllocation.gt(0)) {
-          const applied = Decimal.min(remainingCredit, saleRecord.remainingAfterAllocation);
-          saleRecord.remainingAfterAllocation = saleRecord.remainingAfterAllocation.sub(applied);
-          remainingCredit = remainingCredit.sub(applied);
-        }
+    // Step 3: Remaining receipts for FIFO allocation
+    let remainingReceipts = Decimal.max(
+      totalReceipts.sub(totalDirectlyAllocated),
+      new Decimal(0),
+    );
+
+    // Step 4: FIFO - apply remaining receipts to oldest unpaid sales first
+    for (const sale of salesWithDirect) {
+      if (remainingReceipts.lte(0)) break;
+      if (sale.remainingAfterAllocation.gt(0)) {
+        const toApply = Decimal.min(remainingReceipts, sale.remainingAfterAllocation);
+        sale.receiptApplied = toApply;
+        sale.remainingAfterAllocation = sale.remainingAfterAllocation.sub(toApply);
+        remainingReceipts = remainingReceipts.sub(toApply);
       }
     }
 
-    // Step 4: Determine overdue status
+    // Step 5: Determine overdue status
     for (const saleRecord of salesWithDirect) {
       const isOverdue =
         saleRecord.remainingAfterAllocation.gt(0) &&
         saleRecord.effectiveDueDate < istToday;
 
-      const od = isOverdue
-        ? daysOverdue(saleRecord.billDate)
-        : 0;
+      const od = isOverdue ? daysOverdue(saleRecord.billDate) : 0;
 
       resultSales.push({
         id: saleRecord.id,
@@ -445,15 +458,13 @@ export async function getOverdueData(options?: {
 }
 
 // ─── Sidebar count (fast) ────────────────────────────────────────────────────
-// Uses the same FIFO allocation to ensure consistency.
 
 export async function getOverdueCount(): Promise<number> {
   const { totalCount } = await getSalesWithFifoAllocation();
   return totalCount;
 }
 
-// ─── Dashboard overdue stats (fast) ──────────────────────────────────────────
-// Uses the same FIFO allocation to ensure consistency.
+// ─── Dashboard overdue stats ─────────────────────────────────────────────────
 
 export async function getOverdueSummary(): Promise<{
   overdueCount: number;

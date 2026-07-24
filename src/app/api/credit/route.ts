@@ -41,17 +41,10 @@ export async function GET(req: NextRequest) {
     prisma.creditLedger.count({ where }),
   ]);
 
-  // Summary — total pending across all credit sales for active, non-deleted customers
-  const summary = await prisma.sale.aggregate({
-    where: {
-      status: { in: ['COMPLETED', 'PARTIALLY_RETURNED'] },
-      saleType: { in: ['CREDIT', 'PARTIAL'] },
-      pendingAmount: { gt: 0 },
-      customer: { isActive: true, deletedAt: null },
-    },
-    _sum: { pendingAmount: true },
-    _count: { _all: true },
-  });
+  // FIX: Use canonical accounting summary instead of Sale.pendingAmount
+  // This ensures Credit Management matches the ledger and dashboard
+  const { getTotalPendingCredit } = await import('@/lib/accounting');
+  const pendingCredit = await getTotalPendingCredit();
 
   return NextResponse.json({
     ledgers,
@@ -59,8 +52,8 @@ export async function GET(req: NextRequest) {
     page,
     pages: Math.ceil(total / limit),
     summary: {
-      totalPending: summary._sum.pendingAmount ?? 0,
-      customersWithDues: summary._count._all,
+      totalPending: pendingCredit.total,
+      customersWithDues: pendingCredit.count,
     },
   });
 }
