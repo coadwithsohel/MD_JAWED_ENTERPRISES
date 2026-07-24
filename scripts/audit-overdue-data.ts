@@ -10,7 +10,8 @@
 
 import { prisma } from "../src/lib/prisma";
 import { Decimal } from "@prisma/client/runtime/library";
-import { allocateCreditsToSales, getISTStartOfToday, getDefaultCreditDays } from "../src/lib/accounting";
+import { getISTStartOfToday, getDefaultCreditDays, getCustomerAccountingSummary } from "../src/lib/accounting";
+import { getSalesWithFifoAllocation } from "../src/lib/overdue";
 
 async function main() {
   console.log("=".repeat(80));
@@ -111,10 +112,11 @@ async function main() {
   let customersWithBalanceNoOverdue = 0;
 
   const istToday = getISTStartOfToday();
+  const { sales: allFifoSales } = await getSalesWithFifoAllocation();
 
   for (const customer of activeCustomersList) {
-    const salesWithOutstanding = await allocateCreditsToSales(customer.id);
-    const overdueSales = salesWithOutstanding.filter((s) => s.isOverdue);
+    const salesWithOutstanding = allFifoSales.filter((s: { customerId: string | null }) => s.customerId === customer.id);
+    const overdueSales = salesWithOutstanding;
     const hasPositiveBalance = customer.currentBalance.gt(0);
 
     if (overdueSales.length > 0) {
@@ -140,8 +142,8 @@ async function main() {
   for (const customer of activeCustomersList) {
     if (sampleCount >= 5) break;
 
-    const salesWithOutstanding = await allocateCreditsToSales(customer.id);
-    const overdueSales = salesWithOutstanding.filter((s) => s.isOverdue);
+    const salesWithOutstanding = allFifoSales.filter((s: { customerId: string | null }) => s.customerId === customer.id);
+    const overdueSales = salesWithOutstanding;
 
     if (overdueSales.length === 0) continue;
 

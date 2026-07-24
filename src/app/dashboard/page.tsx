@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { getOverdueSummary } from "@/lib/overdue";
+import { getTotalPendingCredit, getTotalOverdue } from "@/lib/accounting";
 import { Decimal } from "@prisma/client/runtime/library";
 import Link from "next/link";
 import {
@@ -38,13 +38,6 @@ async function withTimeout<T>(
   }
 }
 
-// ─── Dashboard trace helper (safe, no sensitive data) ──────────────────────
-const traceStage = (stage: string) => {
-  if (process.env.NODE_ENV === "development" || process.env.VERCEL_ENV) {
-    console.info("[dashboard-trace]", { stage });
-  }
-};
-
 // ─── Formatting ────────────────────────────────────────────────────────────
 function fmt(n: Decimal | number | null | undefined): string {
   const num =
@@ -58,26 +51,20 @@ function fmt(n: Decimal | number | null | undefined): string {
 
 // ─── Data fetching ────────────────────────────────────────────────────────
 async function getDashboardData() {
-  traceStage("request-start");
-  const startTotal = performance.now();
-
-  // No auth call here — this is a server component rendered after auth in middleware/layout
-  traceStage("auth-complete");
-
   const now = new Date();
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date(now);
   todayEnd.setHours(23, 59, 59, 999);
 
-  const QUERY_TIMEOUT = 8_000; // 8 seconds per query
+  const QUERY_TIMEOUT = 15_000;
 
   const [
     todaySales,
-    pendingCredit,
     lowStockCount,
     totalCustomers,
-    overdueStats,
+    pendingCreditSummary,
+    overdueSummary,
     recentSales,
     recentImport,
   ] = await Promise.all([
@@ -94,20 +81,6 @@ async function getDashboardData() {
       "TODAY_SALES",
     ),
     withTimeout(
-      prisma.sale.aggregate({
-        where: {
-          status: { in: ["COMPLETED", "PARTIALLY_RETURNED"] },
-          saleType: { in: ["CREDIT", "PARTIAL"] },
-          pendingAmount: { gt: new Decimal(0) },
-          customer: { isActive: true, deletedAt: null },
-        },
-        _sum: { pendingAmount: true },
-        _count: { _all: true },
-      }),
-      QUERY_TIMEOUT,
-      "PENDING_CREDIT",
-    ),
-    withTimeout(
       prisma.product.count({
         where: { stockQuantity: { lte: 5 }, isActive: true },
       }),
@@ -120,9 +93,14 @@ async function getDashboardData() {
       "CUSTOMER_COUNT",
     ),
     withTimeout(
-      getOverdueSummary(),
+      getTotalPendingCredit(),
       QUERY_TIMEOUT,
-      "OVERDUE_SUMMARY",
+      "PENDING_CREDIT",
+    ),
+    withTimeout(
+      getTotalOverdue(),
+      QUERY_TIMEOUT,
+      "OVERDUE",
     ),
     withTimeout(
       prisma.sale.findMany({
@@ -140,41 +118,18 @@ async function getDashboardData() {
           orderBy: { createdAt: "desc" },
           include: { importedBy: { select: { fullName: true } } },
         })
-        .catch((error) => {
-          const code =
-            typeof error === "object" && error !== null && "code" in error
-              ? String((error as { code?: unknown }).code)
-              : "";
-          if (code === "P2021") {
-            return null;
-          }
-          throw error;
-        }),
+        .catch(() => null),
       QUERY_TIMEOUT,
       "RECENT_IMPORT",
     ),
   ]);
 
-  traceStage("queries-complete");
-  const endTotal = performance.now();
-
-  // Safe timing log (no credentials, hashes, or personal data)
-  console.info("[dashboard-performance]", {
-    durationMs: Math.round(endTotal - startTotal),
-    totalCustomers,
-    pendingCreditCount: pendingCredit._count._all,
-    overdueCount: overdueStats.overdueCount,
-    todaySalesCount: todaySales._count._all,
-  });
-
-  traceStage("response-return");
-
   return {
     todaySales,
-    pendingCredit,
+    pendingCreditSummary,
     lowStockCount,
     totalCustomers,
-    overdueStats,
+    overdueSummary,
     recentSales,
     recentImport,
   };
@@ -213,15 +168,7 @@ function StatCard({
 }
 
 export default async function DashboardPage() {
-  const {
-    todaySales,
-    pendingCredit,
-    lowStockCount,
-    totalCustomers,
-    overdueStats,
-    recentSales,
-    recentImport,
-  } = await getDashboardData();
+  const data = await getDashboardData();
 
   return (
     <div className="space-y-6">
@@ -242,22 +189,22 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Today's Revenue"
-          value={fmt(todaySales._sum.grandTotal)}
-          sub={`${todaySales._count._all} invoices today`}
+          value={fmt(data.todaySales._sum.grandTotal)}
+          sub={`${data.todaySales._count._all} invoices today`}
           icon={TrendingUp}
           color="bg-blue-100 text-blue-600"
         />
         <StatCard
           title="Pending Credit"
-          value={fmt(pendingCredit._sum.pendingAmount)}
-          sub={`${pendingCredit._count._all} outstanding sales`}
+          value={fmt(data.pendingCreditSummary.total)}
+          sub={`${data.pendingCreditSummary.count} outstanding customers`}
           icon={CreditCard}
           color="bg-orange-100 text-orange-600"
           href="/dashboard/credit"
         />
         <StatCard
           title="Total Customers"
-          value={String(totalCustomers)}
+          value={String(data.totalCustomers)}
           sub="Active accounts"
           icon={Users}
           color="bg-green-100 text-green-600"
@@ -265,7 +212,7 @@ export default async function DashboardPage() {
         />
         <StatCard
           title="Low Stock Items"
-          value={String(lowStockCount)}
+          value={String(data.lowStockCount)}
           sub="Need reordering"
           icon={Package}
           color="bg-red-100 text-red-600"
@@ -274,7 +221,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Overdue alert */}
-      {overdueStats.overdueCount > 0 && (
+      {data.overdueSummary.count > 0 && (
         <Link
           href="/dashboard/overdue-customers"
           className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-6 py-4 hover:bg-amber-100 transition-colors"
@@ -283,9 +230,9 @@ export default async function DashboardPage() {
             <AlertTriangle className="h-5 w-5 text-amber-600" />
             <div>
               <p className="text-sm font-semibold text-amber-900">
-                {overdueStats.overdueCount} overdue invoice
-                {overdueStats.overdueCount !== 1 ? "s" : ""} —{" "}
-                {fmt(overdueStats.overdueAmount)} pending
+                {data.overdueSummary.count} overdue customer
+                {data.overdueSummary.count !== 1 ? "s" : ""} —{" "}
+                {fmt(data.overdueSummary.total)} pending
               </p>
               <p className="text-xs text-amber-700 mt-0.5">
                 Click to view and collect payments
@@ -350,12 +297,12 @@ export default async function DashboardPage() {
             </Link>
           </div>
           <div className="divide-y divide-slate-50">
-            {recentSales.length === 0 ? (
+            {data.recentSales.length === 0 ? (
               <p className="px-6 py-10 text-center text-slate-400 text-sm">
                 No sales today yet.
               </p>
             ) : (
-              recentSales.map((sale) => (
+              data.recentSales.map((sale) => (
                 <Link
                   key={sale.id}
                   href={`/dashboard/invoices/${sale.id}`}
@@ -404,7 +351,7 @@ export default async function DashboardPage() {
             </Link>
           </div>
           <div className="px-6 py-6">
-            {!recentImport ? (
+            {!data.recentImport ? (
               <div className="text-center py-4">
                 <Upload className="h-10 w-10 text-slate-200 mx-auto mb-3" />
                 <p className="text-slate-500 text-sm font-medium">
@@ -424,35 +371,35 @@ export default async function DashboardPage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-slate-900 truncate">
-                    {recentImport.originalFileName}
+                    {data.recentImport.originalFileName}
                   </span>
                   <span
                     className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      recentImport.status === "COMPLETED"
+                      data.recentImport.status === "COMPLETED"
                         ? "bg-green-100 text-green-700"
-                        : recentImport.status === "FAILED"
+                        : data.recentImport.status === "FAILED"
                           ? "bg-red-100 text-red-700"
                           : "bg-amber-100 text-amber-700"
                     }`}
                   >
-                    {recentImport.status}
+                    {data.recentImport.status}
                   </span>
                 </div>
                 <div className="grid grid-cols-3 gap-3 text-center">
                   {[
                     {
                       label: "Created",
-                      value: recentImport.importedRows,
+                      value: data.recentImport.importedRows,
                       color: "text-green-600",
                     },
                     {
                       label: "Updated",
-                      value: recentImport.updatedRows,
+                      value: data.recentImport.updatedRows,
                       color: "text-blue-600",
                     },
                     {
                       label: "Skipped",
-                      value: recentImport.skippedRows,
+                      value: data.recentImport.skippedRows,
                       color: "text-slate-500",
                     },
                   ].map((s) => (
@@ -465,8 +412,8 @@ export default async function DashboardPage() {
                   ))}
                 </div>
                 <p className="text-xs text-slate-500">
-                  Imported by {recentImport.importedBy.fullName} ·{" "}
-                  {new Date(recentImport.createdAt).toLocaleDateString(
+                  Imported by {data.recentImport.importedBy.fullName} ·{" "}
+                  {new Date(data.recentImport.createdAt).toLocaleDateString(
                     "en-IN",
                     { timeZone: "Asia/Kolkata" },
                   )}

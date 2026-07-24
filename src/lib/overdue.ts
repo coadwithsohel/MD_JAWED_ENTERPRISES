@@ -96,7 +96,7 @@ function getBillDateFromSale(sale: {
 
 // ─── Get all Sales with outstanding amounts and their FIFO-allocated payments ──
 
-async function getSalesWithFifoAllocation(): Promise<{
+export async function getSalesWithFifoAllocation(): Promise<{
   sales: Array<{
     id: string;
     invoiceNumber: string;

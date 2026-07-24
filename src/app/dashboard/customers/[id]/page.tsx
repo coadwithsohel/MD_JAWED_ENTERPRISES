@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -604,6 +604,16 @@ function InlineActionMenu({
 export default function CustomerLedgerPage() {
   const { id: customerId } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
+
+  // Context-aware back URL
+  function getBackUrl(): string {
+    if (returnTo === "/dashboard/overdue-customers") {
+      return "/dashboard/overdue-customers";
+    }
+    return "/dashboard/customers";
+  }
 
   const [data, setData] = useState<LedgerResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -952,9 +962,9 @@ export default function CustomerLedgerPage() {
                   {/* Back + identity */}
                   <div className="flex items-start gap-3 flex-1 min-w-0">
                     <Link
-                      href="/dashboard/customers"
+                      href={getBackUrl()}
                       className="ledger-no-print shrink-0 h-9 w-9 rounded-lg border border-slate-200 flex items-center justify-center text-slate-500 hover:text-slate-800 hover:border-slate-300 hover:bg-slate-50 transition-all mt-0.5"
-                      aria-label="Back to customers"
+                      aria-label="Back"
                     >
                       <ArrowLeft className="h-4 w-4" aria-hidden="true" />
                     </Link>

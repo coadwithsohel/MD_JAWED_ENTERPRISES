@@ -164,196 +164,234 @@ export async function getDefaultCreditDays(): Promise<number> {
   return cachedDefaultCreditDays;
 }
 
-/**
- * Calculate customer current balance.
- * currentBalance = openingBalance + totalDebit - totalCredit
- */
-export async function getCustomerBalance(customerId: string): Promise<{
-  currentBalance: Decimal;
+// ─── Shared Customer Accounting Summary ──────────────────────────────────────
+// Single canonical source for all financial summaries.
+// Uses CreditLedger as the authoritative transaction source (same as the ledger API).
+// Does NOT use Sale.pendingAmount, Customer.currentBalance, or Payment.amount directly.
+
+export interface CustomerAccountingSummary {
+  customerId: string;
   openingBalance: Decimal;
-  totalSales: Decimal;
-  totalPayments: Decimal;
-}> {
+  totalDebit: Decimal;   // sum of CREDIT_SALE, DEBIT_NOTE, ADJUSTMENT (debit-side)
+  totalCredit: Decimal;  // sum of PAYMENT_RECEIVED, CREDIT_NOTE, SALE_CANCELLED, RETURN_CREDIT
+  closingBalance: Decimal; // openingBalance + totalDebit - totalCredit
+  outstanding: Decimal;  // Math.max(closingBalance, 0)
+  advance: Decimal;      // Math.max(-closingBalance, 0)
+  sales: Decimal;        // total CREDIT_SALE amount
+  receipts: Decimal;     // total PAYMENT_RECEIVED amount
+}
+
+/**
+ * Get single customer accounting summary from canonical CreditLedger source.
+ */
+export async function getCustomerAccountingSummary(
+  customerId: string
+): Promise<CustomerAccountingSummary> {
   const customer = await prisma.customer.findUnique({
     where: { id: customerId },
-    select: { openingBalance: true, currentBalance: true },
+    select: { openingBalance: true },
   });
 
-  if (!customer) {
-    return {
-      currentBalance: new Decimal(0),
-      openingBalance: new Decimal(0),
-      totalSales: new Decimal(0),
-      totalPayments: new Decimal(0),
-    };
-  }
+  const openingBalance = customer?.openingBalance ?? new Decimal(0);
 
-  const [salesAgg, paymentAgg] = await Promise.all([
-    prisma.sale.aggregate({
-      where: {
-        customerId,
-        status: { in: ["COMPLETED", "PARTIALLY_RETURNED"] },
-      },
-      _sum: { grandTotal: true },
-    }),
-    prisma.payment.aggregate({
-      where: {
-        customerId,
-        status: "COMPLETED",
-      },
-      _sum: { amount: true },
-    }),
-  ]);
+  // Debit transactions: CREDIT_SALE, PAYMENT_REVERSAL, ADJUSTMENT (amount is positive in CreditLedger for these, they increase the balance)
+  const debitAgg = await prisma.creditLedger.aggregate({
+    where: {
+      customerId,
+      transactionType: { in: ["CREDIT_SALE", "PAYMENT_REVERSAL", "ADJUSTMENT"] },
+    },
+    _sum: { amount: true },
+  });
 
-  const totalSales = salesAgg._sum.grandTotal ?? new Decimal(0);
-  const totalPayments = paymentAgg._sum.amount ?? new Decimal(0);
-  const opening = customer.openingBalance ?? new Decimal(0);
-  const currentBalance = new Decimal(opening).add(totalSales).sub(totalPayments);
+  // Credit transactions: PAYMENT_RECEIVED, SALE_CANCELLED, RETURN_CREDIT (these reduce the balance)
+  const creditAgg = await prisma.creditLedger.aggregate({
+    where: {
+      customerId,
+      transactionType: { in: ["PAYMENT_RECEIVED", "SALE_CANCELLED", "RETURN_CREDIT"] },
+    },
+    _sum: { amount: true },
+  });
+
+  const totalDebit = (debitAgg._sum?.amount) ?? new Decimal(0);
+  const totalCredit = (creditAgg._sum?.amount) ?? new Decimal(0);
+  const closingBalance = openingBalance.add(totalDebit).sub(totalCredit);
+  const outstanding = Decimal.max(closingBalance, new Decimal(0));
+  const advance = Decimal.max(closingBalance.negated(), new Decimal(0));
+
+  // Sales and receipts breakdown
+  const salesAgg = await prisma.creditLedger.aggregate({
+    where: {
+      customerId,
+      transactionType: "CREDIT_SALE",
+    },
+    _sum: { amount: true },
+  });
+
+  const receiptsAgg = await prisma.creditLedger.aggregate({
+    where: {
+      customerId,
+      transactionType: "PAYMENT_RECEIVED",
+    },
+    _sum: { amount: true },
+  });
 
   return {
-    currentBalance,
-    openingBalance: opening,
-    totalSales,
-    totalPayments,
+    customerId,
+    openingBalance,
+    totalDebit,
+    totalCredit,
+    closingBalance,
+    outstanding,
+    advance,
+    sales: salesAgg._sum.amount ?? new Decimal(0),
+    receipts: receiptsAgg._sum.amount ?? new Decimal(0),
   };
 }
 
 /**
- * Apply FIFO credit allocation to Sales.
- *
- * Sorts Sales by original bill date (createdAt) ascending.
- * Applies available credits (receipts) to oldest unpaid Sales first.
- * Returns Sales with their computed remaining amounts.
- *
- * Overdue is determined by the 15-day fixed rule via getOverdueDate().
+ * Get accounting summaries for all active customers (grouped query).
+ * Used by Dashboard, Credit Management, and Overdue pages.
  */
-export interface SaleWithOutstanding {
-  id: string;
-  invoiceNumber: string;
-  customerId: string | null;
-  grandTotal: Decimal;
-  paidAmount: Decimal;
-  pendingAmount: Decimal;
-  transactionDate: Date;
-  dueDate: Date | null;
-  effectiveDueDate: Date;
-  saleType: string;
-  status: string;
-  paymentStatus: string;
-  createdAt: Date;
-  remainingAfterAllocation: Decimal;
-  isOverdue: boolean;
-}
-
-export interface CreditRecord {
-  id: string;
-  amount: Decimal;
-  paymentDate: Date;
-  againstReference?: string | null;
-}
-
-export async function allocateCreditsToSales(
-  customerId: string,
-): Promise<SaleWithOutstanding[]> {
-  const [sales, payments] = await Promise.all([
-    prisma.sale.findMany({
-      where: {
-        customerId,
-        status: { in: ["COMPLETED", "PARTIALLY_RETURNED"] },
-        saleType: { in: ["CREDIT", "PARTIAL"] },
-      },
-      orderBy: { createdAt: "asc" },
-    }),
-    prisma.payment.findMany({
-      where: {
-        customerId,
-        status: "COMPLETED",
-      },
-      orderBy: { paymentDate: "asc" },
-    }),
-  ]);
-
-  // Apply directly-linked payments first (by saleId or by againstReference)
-  const directlyAllocated = new Map<string, Decimal>();
-  for (const payment of payments) {
-    if (payment.saleId) {
-      const sale = sales.find((s) => s.id === payment.saleId);
-      if (sale) {
-        const existing = directlyAllocated.get(sale.id) ?? new Decimal(0);
-        directlyAllocated.set(sale.id, existing.add(payment.amount));
-      }
-    } else {
-      // Try to find by againstReference in notes (fallback)
-      const againstMatch = payment.notes?.match(/against\s+(\S+)/i);
-      if (againstMatch) {
-        const ref = againstMatch[1];
-        const sale = sales.find((s) => s.invoiceNumber === ref);
-        if (sale) {
-          const existing = directlyAllocated.get(sale.id) ?? new Decimal(0);
-          directlyAllocated.set(sale.id, existing.add(payment.amount));
-        }
-      }
-    }
-  }
-
-  // Build sales with remaining after direct allocation
-  const salesWithAlloc: SaleWithOutstanding[] = sales.map((sale) => {
-    const directAlloc = directlyAllocated.get(sale.id) ?? new Decimal(0);
-    const pending = new Decimal(sale.grandTotal).sub(
-      new Decimal(sale.paidAmount).add(directAlloc),
-    );
-    const remaining = Decimal.max(pending, new Decimal(0));
-
-    // Use the fixed 15-day overdue rule (NOT dueDate or credit days)
-    const overdueDate = getOverdueDate(sale.createdAt);
-    const istToday = getISTStartOfToday();
-    const isOverdue = remaining.gt(0) && istToday > overdueDate;
-
-    return {
-      id: sale.id,
-      invoiceNumber: sale.invoiceNumber,
-      customerId: sale.customerId,
-      grandTotal: sale.grandTotal,
-      paidAmount: sale.paidAmount,
-      pendingAmount: sale.pendingAmount,
-      transactionDate: sale.createdAt,
-      dueDate: sale.dueDate,
-      effectiveDueDate: overdueDate,
-      saleType: sale.saleType,
-      status: sale.status,
-      paymentStatus: sale.paymentStatus,
-      createdAt: sale.createdAt,
-      remainingAfterAllocation: remaining,
-      isOverdue,
-    };
+export async function getAllCustomerAccountingSummaries(): Promise<Map<string, CustomerAccountingSummary>> {
+  const customers = await prisma.customer.findMany({
+    where: { isActive: true, deletedAt: null },
+    select: { id: true, openingBalance: true },
   });
 
-  // FIFO: apply unlinked payments to oldest unpaid sales
-  const unlinkedPayments = payments.filter(
-    (p) => !p.saleId && !directlyAllocated.has(p.id),
-  );
+  const customerIds = customers.map(c => c.id);
+  const openingMap = new Map(customers.map(c => [c.id, c.openingBalance ?? new Decimal(0)]));
 
-  // Sort unlinked by paymentDate
-  unlinkedPayments.sort(
-    (a, b) =>
-      new Date(a.paymentDate).getTime() - new Date(b.paymentDate).getTime(),
-  );
+  // Get all CreditLedger entries for these customers
+  const ledgerEntries = await prisma.creditLedger.findMany({
+    where: {
+      customerId: { in: customerIds },
+      transactionType: { not: "OPENING_BALANCE" },
+    },
+    select: {
+      customerId: true,
+      transactionType: true,
+      amount: true,
+    },
+  });
 
-  for (const payment of unlinkedPayments) {
-    let remainingCredit = new Decimal(payment.amount);
-    for (const saleRecord of salesWithAlloc) {
-      if (remainingCredit.lte(0)) break;
-      if (saleRecord.remainingAfterAllocation.gt(0)) {
-        const applied = Decimal.min(remainingCredit, saleRecord.remainingAfterAllocation);
-        saleRecord.remainingAfterAllocation = saleRecord.remainingAfterAllocation.sub(applied);
-        remainingCredit = remainingCredit.sub(applied);
+  // Aggregate per customer
+  type Agg = { totalDebit: Decimal; totalCredit: Decimal; sales: Decimal; receipts: Decimal };
+  const aggMap = new Map<string, Agg>();
 
-        // Recalculate overdue status using fixed 15-day rule
-        const istToday = getISTStartOfToday();
-        saleRecord.isOverdue = saleRecord.remainingAfterAllocation.gt(0) && istToday > saleRecord.effectiveDueDate;
-      }
+  for (const entry of ledgerEntries) {
+    const agg = aggMap.get(entry.customerId) ?? {
+      totalDebit: new Decimal(0),
+      totalCredit: new Decimal(0),
+      sales: new Decimal(0),
+      receipts: new Decimal(0),
+    };
+
+    const amount = entry.amount ?? new Decimal(0);
+
+    switch (entry.transactionType) {
+      case "CREDIT_SALE":
+      case "PAYMENT_REVERSAL":
+      case "ADJUSTMENT":
+        agg.totalDebit = agg.totalDebit.add(amount);
+        break;
+      case "PAYMENT_RECEIVED":
+      case "SALE_CANCELLED":
+      case "RETURN_CREDIT":
+        agg.totalCredit = agg.totalCredit.add(amount);
+        break;
     }
+
+    if (entry.transactionType === "CREDIT_SALE") {
+      agg.sales = agg.sales.add(amount);
+    }
+    if (entry.transactionType === "PAYMENT_RECEIVED") {
+      agg.receipts = agg.receipts.add(amount);
+    }
+
+    aggMap.set(entry.customerId, agg);
   }
 
-  return salesWithAlloc;
+  // Build results
+  const result = new Map<string, CustomerAccountingSummary>();
+  for (const customerId of customerIds) {
+    const openingBalance = openingMap.get(customerId) ?? new Decimal(0);
+    const agg = aggMap.get(customerId) ?? {
+      totalDebit: new Decimal(0),
+      totalCredit: new Decimal(0),
+      sales: new Decimal(0),
+      receipts: new Decimal(0),
+    };
+
+    const closingBalance = openingBalance.add(agg.totalDebit).sub(agg.totalCredit);
+    const outstanding = Decimal.max(closingBalance, new Decimal(0));
+    const advance = Decimal.max(closingBalance.negated(), new Decimal(0));
+
+    result.set(customerId, {
+      customerId,
+      openingBalance,
+      totalDebit: agg.totalDebit,
+      totalCredit: agg.totalCredit,
+      closingBalance,
+      outstanding,
+      advance,
+      sales: agg.sales,
+      receipts: agg.receipts,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Get total pending credit (sum of all outstanding balances) for Dashboard.
+ */
+export async function getTotalPendingCredit(): Promise<{ total: Decimal; count: number }> {
+  const summaries = await getAllCustomerAccountingSummaries();
+  let total = new Decimal(0);
+  let count = 0;
+  for (const summary of summaries.values()) {
+    if (summary.outstanding.gt(0)) {
+      total = total.add(summary.outstanding);
+      count++;
+    }
+  }
+  return { total, count };
+}
+
+/**
+ * Get total overdue amount from all customers, using the shared accounting summary
+ * as a cap: overdue amount cannot exceed outstanding balance.
+ */
+export async function getTotalOverdue(): Promise<{ total: Decimal; count: number }> {
+  // Get all overdue invoices using the same FIFO logic from overdue.ts
+  // but cap each customer's overdue at their outstanding balance
+  const { getSalesWithFifoAllocation } = await import("./overdue");
+  const { sales: overdueSales } = await getSalesWithFifoAllocation();
+
+  // Get all customer accounting summaries for capping
+  const summaries = await getAllCustomerAccountingSummaries();
+
+  // Group overdue sales by customer
+  const customerSales = new Map<string, Decimal[]>();
+  for (const sale of overdueSales) {
+    if (!sale.customerId) continue;
+    const list = customerSales.get(sale.customerId) ?? [];
+    list.push(sale.remainingAfterAllocation);
+    customerSales.set(sale.customerId, list);
+  }
+
+  // For each customer, cap overdue at outstanding balance
+  let totalOverdue = new Decimal(0);
+  for (const [cid, amounts] of customerSales) {
+    const summary = summaries.get(cid);
+    const outstanding = summary?.outstanding ?? new Decimal(0);
+    const sumOverdue = amounts.reduce((s, a) => s.add(a), new Decimal(0));
+    const capped = Decimal.min(sumOverdue, outstanding);
+    totalOverdue = totalOverdue.add(capped);
+  }
+
+  return {
+    total: totalOverdue,
+    count: customerSales.size,
+  };
 }
