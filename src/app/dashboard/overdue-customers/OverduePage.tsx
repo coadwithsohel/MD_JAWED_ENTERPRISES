@@ -153,7 +153,7 @@ export default function OverduePage({ initialData }: { initialData: OverduePageD
                       <a href={`https://wa.me/91${c.mobile}?text=${whatsappMsg}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs px-3 py-1.5 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors font-medium">
                         <MessageCircle className="h-3 w-3" /> WhatsApp
                       </a>
-                      <Link href={`/dashboard/customers?search=${c.mobile}`} className="flex items-center gap-1 text-xs px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors font-medium">
+                      <Link href={`/dashboard/customers/${c.id}`} className="flex items-center gap-1 text-xs px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors font-medium">
                         View <ArrowRight className="h-3 w-3" />
                       </Link>
                     </div>
