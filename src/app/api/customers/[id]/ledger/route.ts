@@ -252,7 +252,12 @@ export async function GET(
     },
   });
 
-  let importedTransactions: Array<{
+  // NOTE: CustomerLedgerTransaction is intentionally NOT queried here.
+  // Previously, this table was read and concatenated with CreditLedger + Sale + Payment,
+  // causing every transaction to appear twice in the ledger.
+  // The import route no longer creates CustomerLedgerTransaction records.
+  // All financial data is represented through CreditLedger, Sale, and Payment models.
+  const importedTransactions: Array<{
     id: string;
     transactionDate: Date;
     voucherType: string;
@@ -262,33 +267,6 @@ export async function GET(
     credit: unknown;
     sourceSystem: string | null;
   }> = [];
-
-  try {
-    importedTransactions = await prisma.customerLedgerTransaction.findMany({
-      where: {
-        customerId,
-        ...(Object.keys(dateFilter).length
-          ? { transactionDate: dateFilter }
-          : {}),
-      },
-      orderBy: [{ transactionDate: "asc" }, { id: "asc" }],
-      select: {
-        id: true,
-        transactionDate: true,
-        voucherType: true,
-        voucherNumber: true,
-        particulars: true,
-        debit: true,
-        credit: true,
-        sourceSystem: true,
-      },
-    });
-  } catch (error) {
-    console.warn(
-      "Customer ledger fallback: imported transactions unavailable",
-      error,
-    );
-  }
 
   // 8. Normalize all records into unified LedgerEntry list (unsorted first)
   const rawEntries: Array<{

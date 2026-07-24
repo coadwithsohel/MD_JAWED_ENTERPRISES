@@ -241,27 +241,15 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          // ─── CREATE PERMANENT CUSTOMER LEDGER TRANSACTION ────────────────
-          await prisma.customerLedgerTransaction.create({
-            data: {
-              customerId: voucher.customerId,
-              transactionDate: voucherDate,
-              dueDate: dueDate,
-              voucherType: vType,
-              voucherNumber: voucherNumber || undefined,
-              againstReference: againstVoucherNumber || undefined,
-              particulars: `${vType} — ${voucherNumber || narration}`.trim().slice(0, 200),
-              debit: isDebit ? amount : 0,
-              credit: isDebit ? 0 : amount,
-              sourceSystem: "TALLY",
-              sourceGuid: (v.tallyGuid as string) || undefined,
-              sourceRemoteId: (v.tallyRemoteId as string) || undefined,
-              sourceVchKey: (v.voucherKey as string) || undefined,
-              sourceMasterId: (v.tallyMasterId as string) || undefined,
-              importBatchId: batchId,
-            },
-          });
-
+          // NOTE: CustomerLedgerTransaction is NOT created here to avoid duplicates.
+          // The ledger query now derives rows from CreditLedger + Sale + Payment only.
+          // CustomerLedgerTransaction was causing every transaction to appear twice
+          // in the customer ledger (once via CreditLedger, once via CustomerLedgerTransaction).
+          // If source tracking is needed, use TallyVoucher fields (tallyGuid, voucherKey, etc.)
+          // or the CreditLedger record's description field.
+          // ─── SOURCE METADATA: stored on TallyVoucher for provenance ──────
+          // Existing TallyVoucher already has: tallyGuid, tallyRemoteId,
+          // voucherKey, tallyMasterId, sourceFileName.
           // ─── UPDATE CUSTOMER CURRENT BALANCE ─────────────────────────────
           await prisma.customer.update({
             where: { id: voucher.customerId },

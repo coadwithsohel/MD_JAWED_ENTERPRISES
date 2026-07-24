@@ -150,10 +150,10 @@ export default function Sidebar() {
         />
       )}
 
-      {/* Sidebar — desktop: always visible, mobile: drawer */}
+      {/* Sidebar — desktop: always visible and fixed, mobile: drawer */}
       <aside
         className={[
-          "fixed lg:relative inset-y-0 left-0 z-50 flex flex-col w-64 bg-slate-900 text-slate-300 border-r border-slate-800 transition-transform duration-300",
+          "fixed inset-y-0 left-0 z-50 flex flex-col w-64 bg-slate-900 text-slate-300 border-r border-slate-800 transition-transform duration-300 h-screen",
           mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
         ].join(" ")}
         aria-label="Main navigation"

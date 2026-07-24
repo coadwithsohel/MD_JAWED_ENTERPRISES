@@ -442,27 +442,11 @@ export async function commitTransactionImport(
 
         const v = voucher as Record<string, unknown>;
 
-        // Create CustomerLedgerTransaction
-        await prisma.customerLedgerTransaction.create({
-          data: {
-            customerId: v.customerId as string,
-            transactionDate: v.voucherDate as Date,
-            dueDate: v.dueDate as Date | null,
-            voucherType: v.voucherType as string,
-            voucherNumber: (v.voucherNumber as string) || undefined,
-            againstReference: (v.againstVoucherNumber as string) || undefined,
-            particulars: `Import ${v.voucherType as string} — ${v.voucherNumber || v.narration || ""}`.trim(),
-            debit: isDebit ? amount : 0,
-            credit: isDebit ? 0 : amount,
-            sourceSystem: "TALLY",
-            sourceGuid: (v.tallyGuid as string) || undefined,
-            sourceRemoteId: (v.tallyRemoteId as string) || undefined,
-            sourceVchKey: (v.voucherKey as string) || undefined,
-            sourceMasterId: (v.tallyMasterId as string) || undefined,
-            importBatchId: batchId,
-          },
-        });
-
+        // NOTE: CustomerLedgerTransaction is intentionally NOT created here.
+        // Creating both CreditLedger AND CustomerLedgerTransaction caused every
+        // transaction to appear twice in the customer ledger.
+        // The ledger query now uses only CreditLedger + Sale + Payment.
+        // Source metadata is preserved on the TallyVoucher record.
         // Update customer balance
         await prisma.customer.update({
           where: { id: voucher.customerId },

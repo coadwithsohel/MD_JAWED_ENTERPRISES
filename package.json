@@ -11,7 +11,9 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "audit:duplicates": "tsx scripts/audit-duplicate-financial-records.ts",
+    "repair:financial-duplicates": "tsx scripts/repair-existing-financial-duplicates.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
