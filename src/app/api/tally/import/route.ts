@@ -229,6 +229,19 @@ export async function POST(req: NextRequest) {
 
           // ─── CREATE PERMANENT LEDGER ENTRY (CreditLedger) ────────────────
           const ledgerType = isDebit ? "CREDIT_SALE" : "PAYMENT_RECEIVED";
+          let paymentIdForLedger: string | undefined;
+
+          // For RECEIPT vouchers, resolve the Payment record that was just created
+          if (vType === "RECEIPT") {
+            const receiptNumber = voucherNumber || `REC-IMP-${v.id as string}`;
+            const createdPayment = await prisma.payment.findUnique({
+              where: { receiptNumber },
+            });
+            if (createdPayment) {
+              paymentIdForLedger = createdPayment.id;
+            }
+          }
+
           const ledgerEntry = await prisma.creditLedger.create({
             data: {
               customerId: voucher.customerId,
@@ -238,6 +251,7 @@ export async function POST(req: NextRequest) {
               description: `${vType} — ${voucherNumber || narration}`.trim().slice(0, 200),
               createdAt: voucherDate,
               saleId: saleId || undefined,
+              paymentId: paymentIdForLedger,
             },
           });
 
