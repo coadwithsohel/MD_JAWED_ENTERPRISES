@@ -62,9 +62,9 @@ export function parseSignedAmount(value: string | null | undefined): AmountParse
     signMultiplier = -1; // Cr = negative (credit)
   }
 
-  // Remove currency symbols and commas
+  // Remove currency symbols and commas. Preserve decimal point.
   let cleaned = workingValue
-    .replace(/[₹Rs.,\s]/g, "")
+    .replace(/[₹Rs,\s]/g, "")  // removed '.' from the character class
     .trim();
 
   // Handle negative sign
