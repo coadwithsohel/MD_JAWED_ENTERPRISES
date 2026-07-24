@@ -1,22 +1,20 @@
 import { prisma } from "./prisma";
 import { Decimal } from "@prisma/client/runtime/library";
-import { getISTStartOfToday } from "./accounting";
+import {
+  getISTStartOfToday,
+  getOverdueDate,
+  daysOverdue,
+} from "./accounting";
 
-// ─── Date helpers ─────────────────────────────────────────────────────────────
+// ─── Re-export for backward compatibility ───────────────────────────────────
+// These are used by other modules that import from @/lib/overdue
+export { addDays } from "./accounting";
 
+/**
+ * Get current time in IST (Asia/Kolkata).
+ */
 export function getISTNow(): Date {
   return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-}
-
-export function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-export function daysBetween(from: Date, to: Date): number {
-  const msPerDay = 1000 * 60 * 60 * 24;
-  return Math.floor((to.getTime() - from.getTime()) / msPerDay);
 }
 
 // ─── Overdue response types ──────────────────────────────────────────────────
@@ -74,34 +72,31 @@ export interface OverdueDataResponse {
   };
 }
 
-// ─── Get default credit days (cached) ────────────────────────────────────────
+// ─── Resolve original bill date from a Sale record ─────────────────────────
+// Priority:
+// 1. createdAt (the Sale's creation date, which for imported records
+//    is set to the original voucherDate from Tally)
+// 2. There is no separate transactionDate, invoiceDate, or billDate field
+//    on the Sale model, so createdAt is the authoritative bill date.
+//
+// IMPORTANT: When importing from Tally, the Sale record's createdAt is set
+// to voucherDate (the original Tally bill date), NOT the import timestamp.
+// See src/app/api/tally/import/route.ts lines 155: createdAt: voucherDate
 
-let cachedDefaultCreditDays: number | null = null;
-let cacheTimestamp = 0;
-const CACHE_TTL_MS = 60_000; // 1 minute
-
-async function getDefaultCreditDaysCached(): Promise<number> {
-  const now = Date.now();
-  if (cachedDefaultCreditDays !== null && now - cacheTimestamp < CACHE_TTL_MS) {
-    return cachedDefaultCreditDays;
+function getBillDateFromSale(sale: {
+  createdAt: Date;
+}): Date | null {
+  // createdAt is the authoritative bill date for imported Sales
+  // because the import process sets createdAt = voucherDate
+  if (sale.createdAt) {
+    return sale.createdAt;
   }
-  const settings = await prisma.shopSettings.findFirst({
-    select: { defaultCreditDays: true },
-  });
-  cachedDefaultCreditDays = settings?.defaultCreditDays ?? 15;
-  cacheTimestamp = now;
-  return cachedDefaultCreditDays;
+  return null;
 }
 
-// ─── Optimized Overdue Query ──────────────────────────────────────────────────
-// Uses a single aggregated raw SQL query instead of N+1 per-customer loops.
-// This is the primary fix for the 504 FUNCTION_INVOCATION_TIMEOUT.
+// ─── Get all Sales with outstanding amounts and their FIFO-allocated payments ──
 
-/**
- * Get overdue sales and their customers using a single grouped query.
- * Avoids the N+1 pattern where each customer's FIFO allocation was done separately.
- */
-async function getOverdueSalesAggregated(): Promise<{
+async function getSalesWithFifoAllocation(): Promise<{
   sales: Array<{
     id: string;
     invoiceNumber: string;
@@ -115,20 +110,21 @@ async function getOverdueSalesAggregated(): Promise<{
     createdAt: Date;
     dueDate: Date | null;
     effectiveDueDate: Date;
+    remainingAfterAllocation: Decimal;
+    isOverdue: boolean;
+    daysOverdue: number;
+    billDate: Date | null;
   }>;
   totalAmount: Decimal;
   totalCount: number;
 }> {
-  const defaultCreditDays = await getDefaultCreditDaysCached();
   const istToday = getISTStartOfToday();
 
   // Get all credit sales with pending amounts for active (non-deleted) customers
-  // in a single query — no per-customer loop.
   const sales = await prisma.sale.findMany({
     where: {
       status: { in: ["COMPLETED", "PARTIALLY_RETURNED"] },
       saleType: { in: ["CREDIT", "PARTIAL"] },
-      pendingAmount: { gt: new Decimal(0) },
       customer: {
         isActive: true,
         deletedAt: null,
@@ -150,9 +146,39 @@ async function getOverdueSalesAggregated(): Promise<{
     orderBy: { createdAt: "asc" },
   });
 
-  // Filter overdue sales by effective due date in JavaScript
-  // This is faster than N+1 queries even for large datasets
-  const overdueSales: Array<{
+  // Get all completed payments in one batch for FIFO allocation
+  const customerIds = [...new Set(sales.map((s) => s.customerId).filter(Boolean))] as string[];
+  const payments = await prisma.payment.findMany({
+    where: {
+      customerId: { in: customerIds },
+      status: "COMPLETED",
+    },
+    orderBy: { paymentDate: "asc" },
+  });
+
+  // Group payments by customerId
+  const paymentsByCustomer = new Map<string, typeof payments>();
+  for (const payment of payments) {
+    const cid = payment.customerId;
+    if (!paymentsByCustomer.has(cid)) {
+      paymentsByCustomer.set(cid, []);
+    }
+    paymentsByCustomer.get(cid)!.push(payment);
+  }
+
+  // Group sales by customerId
+  const salesByCustomer = new Map<string, typeof sales>();
+  for ( const sale of sales) {
+    if (!sale.customerId) continue;
+    const cid = sale.customerId;
+    if (!salesByCustomer.has(cid)) {
+      salesByCustomer.set(cid, []);
+    }
+    salesByCustomer.get(cid)!.push(sale);
+  }
+
+  // Apply FIFO per customer
+  const resultSales: Array<{
     id: string;
     invoiceNumber: string;
     customerId: string | null;
@@ -165,29 +191,109 @@ async function getOverdueSalesAggregated(): Promise<{
     createdAt: Date;
     dueDate: Date | null;
     effectiveDueDate: Date;
+    remainingAfterAllocation: Decimal;
+    isOverdue: boolean;
+    daysOverdue: number;
+    billDate: Date | null;
   }> = [];
 
-  for (const sale of sales) {
-    // Calculate effective due date
-    let effectiveDueDate: Date;
-    if (sale.dueDate) {
-      effectiveDueDate = new Date(sale.dueDate);
-    } else {
-      // Use createdAt + defaultCreditDays as fallback
-      effectiveDueDate = new Date(sale.createdAt);
-      effectiveDueDate.setDate(effectiveDueDate.getDate() + defaultCreditDays);
+  for (const [cid, customerSales] of salesByCustomer) {
+    const customerPayments = paymentsByCustomer.get(cid) ?? [];
+
+    // Step 1: Build direct allocation map (by saleId or againstReference)
+    const directlyAllocated = new Map<string, Decimal>();
+    for (const payment of customerPayments) {
+      if (payment.saleId) {
+        const sale = customerSales.find((s) => s.id === payment.saleId);
+        if (sale) {
+          const existing = directlyAllocated.get(sale.id) ?? new Decimal(0);
+          directlyAllocated.set(sale.id, existing.add(payment.amount));
+        }
+      } else {
+        const againstMatch = payment.notes?.match(/against\s+(\S+)/i);
+        if (againstMatch) {
+          const ref = againstMatch[1];
+          const sale = customerSales.find((s) => s.invoiceNumber === ref);
+          if (sale) {
+            const existing = directlyAllocated.get(sale.id) ?? new Decimal(0);
+            directlyAllocated.set(sale.id, existing.add(payment.amount));
+          }
+        }
+      }
     }
 
-    if (effectiveDueDate < istToday) {
-      overdueSales.push({
+    // Step 2: Calculate remaining after direct allocation
+    const salesWithDirect = customerSales.map((sale) => {
+      const directAlloc = directlyAllocated.get(sale.id) ?? new Decimal(0);
+      const pending = new Decimal(sale.grandTotal).sub(
+        new Decimal(sale.paidAmount).add(directAlloc),
+      );
+      const remaining = Decimal.max(pending, new Decimal(0));
+
+      const billDate = getBillDateFromSale(sale);
+      const effectiveDueDate = billDate ? getOverdueDate(billDate) : istToday;
+
+      return {
         ...sale,
+        remainingAfterAllocation: remaining,
         effectiveDueDate,
+        billDate,
+      };
+    });
+
+    // Step 3: FIFO — apply unlinked payments to oldest unpaid sales first
+    const unlinkedPayments = customerPayments.filter(
+      (p) => !p.saleId && !directlyAllocated.has(p.id),
+    );
+
+    for (const payment of unlinkedPayments) {
+      let remainingCredit = new Decimal(payment.amount);
+      for (const saleRecord of salesWithDirect) {
+        if (remainingCredit.lte(0)) break;
+        if (saleRecord.remainingAfterAllocation.gt(0)) {
+          const applied = Decimal.min(remainingCredit, saleRecord.remainingAfterAllocation);
+          saleRecord.remainingAfterAllocation = saleRecord.remainingAfterAllocation.sub(applied);
+          remainingCredit = remainingCredit.sub(applied);
+        }
+      }
+    }
+
+    // Step 4: Determine overdue status
+    for (const saleRecord of salesWithDirect) {
+      const isOverdue =
+        saleRecord.remainingAfterAllocation.gt(0) &&
+        saleRecord.effectiveDueDate < istToday;
+
+      const od = isOverdue
+        ? daysOverdue(saleRecord.billDate)
+        : 0;
+
+      resultSales.push({
+        id: saleRecord.id,
+        invoiceNumber: saleRecord.invoiceNumber,
+        customerId: saleRecord.customerId,
+        grandTotal: saleRecord.grandTotal,
+        paidAmount: saleRecord.paidAmount,
+        pendingAmount: saleRecord.pendingAmount,
+        saleType: saleRecord.saleType,
+        status: saleRecord.status,
+        paymentStatus: saleRecord.paymentStatus,
+        createdAt: saleRecord.createdAt,
+        dueDate: saleRecord.dueDate,
+        effectiveDueDate: saleRecord.effectiveDueDate,
+        remainingAfterAllocation: saleRecord.remainingAfterAllocation,
+        isOverdue,
+        daysOverdue: od,
+        billDate: saleRecord.billDate,
       });
     }
   }
 
+  // Filter only overdue sales
+  const overdueSales = resultSales.filter((s) => s.isOverdue);
+
   const totalAmount = overdueSales.reduce(
-    (sum, s) => sum.add(s.pendingAmount),
+    (sum, s) => sum.add(s.remainingAfterAllocation),
     new Decimal(0),
   );
 
@@ -199,7 +305,6 @@ async function getOverdueSalesAggregated(): Promise<{
 }
 
 // ─── Core Overdue Query (for the overdue-customers page) ──────────────────────
-// Uses the optimized grouped query, then applies pagination, search, and summary.
 
 export async function getOverdueData(options?: {
   page?: number;
@@ -211,7 +316,7 @@ export async function getOverdueData(options?: {
   const limit = options?.limit ?? 50;
   const skip = (page - 1) * limit;
 
-  const { sales: allOverdueSales } = await getOverdueSalesAggregated();
+  const { sales: allOverdueSales } = await getSalesWithFifoAllocation();
 
   if (allOverdueSales.length === 0) {
     return {
@@ -233,7 +338,7 @@ export async function getOverdueData(options?: {
   // Collect unique customer IDs
   const customerIds = [...new Set(filteredSales.map((s) => s.customerId).filter(Boolean))] as string[];
 
-  // Fetch customer details in one batch query (not one-by-one)
+  // Fetch customer details in one batch query
   const customers = customerIds.length > 0
     ? await prisma.customer.findMany({
         where: { id: { in: customerIds } },
@@ -250,12 +355,9 @@ export async function getOverdueData(options?: {
     : [];
   const customerMap = new Map(customers.map((c) => [c.id, c]));
 
-  const istToday = getISTStartOfToday();
-
   // Build overdue invoices
   const allOverdueInvoices: OverdueInvoice[] = filteredSales.map((sale) => {
     const cust = sale.customerId ? customerMap.get(sale.customerId) : undefined;
-    const daysOd = daysBetween(sale.effectiveDueDate, istToday);
     return {
       id: sale.id,
       invoiceNumber: sale.invoiceNumber,
@@ -263,11 +365,11 @@ export async function getOverdueData(options?: {
       createdAt: sale.createdAt,
       dueDate: sale.dueDate,
       effectiveDueDate: sale.effectiveDueDate,
-      daysOverdue: Math.max(0, daysOd),
+      daysOverdue: sale.daysOverdue,
       grandTotal: sale.grandTotal,
       paidAmount: sale.paidAmount,
       pendingAmount: sale.pendingAmount,
-      remainingAfterAllocation: sale.pendingAmount,
+      remainingAfterAllocation: sale.remainingAfterAllocation,
       paymentStatus: sale.paymentStatus,
       saleType: sale.saleType,
     };
@@ -300,24 +402,23 @@ export async function getOverdueData(options?: {
     if (!inv.customer) continue;
     const cid = inv.customer.id;
     const existing = customerAggMap.get(cid);
-    const daysOd = daysBetween(inv.effectiveDueDate, istToday);
 
     if (!existing) {
       customerAggMap.set(cid, {
         customer: inv.customer,
         overdueInvoiceCount: 1,
-        totalOverdueAmount: inv.pendingAmount,
+        totalOverdueAmount: inv.remainingAfterAllocation,
         oldestDueDate: inv.effectiveDueDate,
-        maxDaysOverdue: Math.max(0, daysOd),
+        maxDaysOverdue: inv.daysOverdue,
       });
     } else {
       existing.overdueInvoiceCount += 1;
-      existing.totalOverdueAmount = existing.totalOverdueAmount.add(inv.pendingAmount);
+      existing.totalOverdueAmount = existing.totalOverdueAmount.add(inv.remainingAfterAllocation);
       if (inv.effectiveDueDate < existing.oldestDueDate) {
         existing.oldestDueDate = inv.effectiveDueDate;
       }
-      if (daysOd > existing.maxDaysOverdue) {
-        existing.maxDaysOverdue = daysOd;
+      if (inv.daysOverdue > existing.maxDaysOverdue) {
+        existing.maxDaysOverdue = inv.daysOverdue;
       }
     }
   }
@@ -344,22 +445,21 @@ export async function getOverdueData(options?: {
 }
 
 // ─── Sidebar count (fast) ────────────────────────────────────────────────────
-// Uses the same optimized grouped query instead of per-customer loops.
+// Uses the same FIFO allocation to ensure consistency.
 
 export async function getOverdueCount(): Promise<number> {
-  const { totalCount } = await getOverdueSalesAggregated();
+  const { totalCount } = await getSalesWithFifoAllocation();
   return totalCount;
 }
 
 // ─── Dashboard overdue stats (fast) ──────────────────────────────────────────
-// Uses the same optimized grouped query instead of per-customer loops.
-// This was the PRIMARY cause of the 504 timeout.
+// Uses the same FIFO allocation to ensure consistency.
 
 export async function getOverdueSummary(): Promise<{
   overdueCount: number;
   overdueAmount: Decimal;
 }> {
-  const { totalCount, totalAmount } = await getOverdueSalesAggregated();
+  const { totalCount, totalAmount } = await getSalesWithFifoAllocation();
   return {
     overdueCount: totalCount,
     overdueAmount: totalAmount,
