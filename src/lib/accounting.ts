@@ -381,17 +381,22 @@ export async function getTotalOverdue(): Promise<{ total: Decimal; count: number
   }
 
   // For each customer, cap overdue at outstanding balance
+  // Exclude customers whose capped overdue is 0
   let totalOverdue = new Decimal(0);
+  let count = 0;
   for (const [cid, amounts] of customerSales) {
     const summary = summaries.get(cid);
     const outstanding = summary?.outstanding ?? new Decimal(0);
     const sumOverdue = amounts.reduce((s, a) => s.add(a), new Decimal(0));
     const capped = Decimal.min(sumOverdue, outstanding);
-    totalOverdue = totalOverdue.add(capped);
+    if (capped.gt(0)) {
+      totalOverdue = totalOverdue.add(capped);
+      count++;
+    }
   }
 
   return {
     total: totalOverdue,
-    count: customerSales.size,
+    count,
   };
 }

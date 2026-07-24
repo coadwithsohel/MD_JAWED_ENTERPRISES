@@ -409,6 +409,10 @@ export async function getOverdueData(options?: {
   const total = filteredInvoices.length;
   const pagedInvoices = filteredInvoices.slice(skip, skip + limit);
 
+  // Get canonical accounting summaries for capping overdue at outstanding
+  const { getAllCustomerAccountingSummaries } = await import("./accounting");
+  const canonicalSummaries = await getAllCustomerAccountingSummaries();
+
   // Aggregate by customer
   const customerAggMap = new Map<string, OverdueCustomerSummary>();
   for (const inv of filteredInvoices) {
@@ -436,7 +440,14 @@ export async function getOverdueData(options?: {
     }
   }
 
-  const customersAgg = Array.from(customerAggMap.values());
+  // Cap each customer's overdue at their canonical outstanding balance
+  const customersAgg = Array.from(customerAggMap.values()).map((c) => {
+    if (!c.customer) return c;
+    const canonical = canonicalSummaries.get(c.customer.id);
+    const outstanding = canonical?.outstanding ?? new Decimal(0);
+    const cappedAmount = Decimal.min(c.totalOverdueAmount, outstanding);
+    return { ...c, totalOverdueAmount: cappedAmount };
+  });
 
   const totalOverdueAmount = customersAgg.reduce(
     (sum, c) => sum.add(c.totalOverdueAmount),

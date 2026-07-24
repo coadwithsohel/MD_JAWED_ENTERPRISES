@@ -14,7 +14,7 @@ interface Customer { id: string; fullName: string; mobile: string; customerCode:
 
 export default function CreditPage() {
   const [ledgers, setLedgers] = useState<LedgerEntry[]>([]);
-  const [summary, setSummary] = useState({ totalPending: 0, customersWithDues: 0 });
+  const [summary, setSummary] = useState({ totalPending: 0, customersWithDues: 0, recentPaymentsAmount: 0, recentPaymentsCount: 0 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -96,7 +96,7 @@ export default function CreditPage() {
             <span className="h-9 w-9 rounded-xl bg-orange-100 flex items-center justify-center text-orange-600"><ArrowUpRight className="h-4 w-4" /></span>
           </div>
           <p className="text-3xl font-bold text-orange-600">{fmt(summary.totalPending)}</p>
-          <p className="mt-1 text-sm text-slate-500">Across {summary.customersWithDues} sales</p>
+          <p className="mt-1 text-sm text-slate-500">Across {summary.customersWithDues} customers</p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4">
@@ -104,9 +104,9 @@ export default function CreditPage() {
             <span className="h-9 w-9 rounded-xl bg-green-100 flex items-center justify-center text-green-600"><ArrowDownRight className="h-4 w-4" /></span>
           </div>
           <p className="text-3xl font-bold text-green-600">
-            {fmt(ledgers.filter((l) => l.transactionType === 'PAYMENT_RECEIVED').reduce((s, l) => s + parseFloat(l.amount), 0))}
+            {fmt(summary.recentPaymentsAmount)}
           </p>
-          <p className="mt-1 text-sm text-slate-500">{ledgers.filter((l) => l.transactionType === 'PAYMENT_RECEIVED').length} payments received</p>
+          <p className="mt-1 text-sm text-slate-500">{summary.recentPaymentsCount} payments received</p>
         </div>
       </div>
 

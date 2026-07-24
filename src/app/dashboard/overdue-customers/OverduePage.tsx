@@ -12,6 +12,7 @@ interface OverdueInvoice {
   } | null;
   createdAt: string; dueDate?: string | null;
   daysOverdue: number; grandTotal: string; paidAmount: string; pendingAmount: string;
+  remainingAfterAllocation?: string;
   saleType: string; paymentStatus: string;
 }
 
@@ -62,7 +63,7 @@ export default function OverduePage({ initialData }: { initialData: OverduePageD
     );
   });
 
-  const totalOverdue = initialData.invoices.reduce((sum, i) => sum + parseFloat(i.pendingAmount), 0);
+  const totalOverdue = initialData.invoices.reduce((sum, i) => sum + parseFloat(i.remainingAfterAllocation ?? i.pendingAmount), 0);
 
   const daysBadgeColor = (days: number) => {
     if (days <= 7) return 'bg-amber-100 text-amber-800';
@@ -193,7 +194,7 @@ export default function OverduePage({ initialData }: { initialData: OverduePageD
                     </td>
                     <td className="px-5 py-3 whitespace-nowrap text-sm font-semibold text-slate-900">{fmt(inv.grandTotal)}</td>
                     <td className="px-5 py-3 whitespace-nowrap text-sm text-green-700">{fmt(inv.paidAmount)}</td>
-                    <td className="px-5 py-3 whitespace-nowrap text-sm font-bold text-red-600">{fmt(inv.pendingAmount)}</td>
+                    <td className="px-5 py-3 whitespace-nowrap text-sm font-bold text-red-600">{fmt(inv.remainingAfterAllocation ?? inv.pendingAmount)}</td>
                     <td className="px-5 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
                         {inv.customer && (
