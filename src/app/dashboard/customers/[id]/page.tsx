@@ -37,6 +37,7 @@ import {
   UserX,
   UserCheck,
   Trash2,
+  Loader2,
 } from 'lucide-react';
 import CreditAccountSection from '@/components/customers/CreditAccountSection';
 import ChangeCreditLimitDialog from '@/components/customers/ChangeCreditLimitDialog';
@@ -599,6 +600,196 @@ function InlineActionMenu({
   );
 }
 
+// ─── Inline Record Payment Modal ─────────────────────────────────────────────
+
+/** Returns today as YYYY-MM-DD in Asia/Kolkata. */
+function todayISTStr(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+}
+
+interface RecordPaymentModalProps {
+  customerId: string;
+  customerName: string;
+  currentBalance: string; // formatted display value e.g. "₹3,000.00"
+  onSuccess: () => void;
+  onClose: () => void;
+}
+
+function RecordPaymentModal({ customerId, customerName, currentBalance, onSuccess, onClose }: RecordPaymentModalProps) {
+  const [paymentDate, setPaymentDate] = useState(todayISTStr());
+  const [amount, setAmount] = useState('');
+  const [paymentMode, setPaymentMode] = useState('CASH');
+  const [referenceNumber, setReferenceNumber] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setFormError('');
+    if (!paymentDate) { setFormError('Payment date is required'); return; }
+    if (!amount || Number(amount) <= 0) { setFormError('Enter a valid amount'); return; }
+    setSaving(true);
+    try {
+      const res = await fetch('/api/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId,
+          amount: Number(amount),
+          paymentMode,
+          referenceNumber: referenceNumber.trim() || null,
+          notes: notes.trim() || null,
+          paymentDate,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setFormError(data.error || 'Failed to record payment'); return; }
+      onSuccess();
+    } catch {
+      setFormError('Network error. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Record Payment">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-slate-200">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+              <Wallet className="h-5 w-5 text-emerald-600" aria-hidden="true" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Record Payment</h2>
+              <p className="text-xs text-slate-500 truncate max-w-[200px]">{customerName}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors" aria-label="Close">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Outstanding balance info */}
+        <div className="px-6 pt-4">
+          <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5">
+            <span className="text-xs text-slate-500 font-medium">Current Outstanding</span>
+            <span className="text-sm font-bold text-rose-700 tabular-nums">{currentBalance}</span>
+          </div>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="p-6 pt-4 space-y-4">
+          {formError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {formError}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="pay-date">
+              Payment Date <span className="text-red-500">*</span>
+            </label>
+            <input
+              id="pay-date"
+              required
+              type="date"
+              value={paymentDate}
+              max={todayISTStr()}
+              onChange={(e) => setPaymentDate(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+            />
+            <p className="mt-1 text-xs text-slate-400">Defaults to today. Select an earlier date for backdated entries.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="pay-amount">
+              Amount (₹) <span className="text-red-500">*</span>
+            </label>
+            <input
+              id="pay-amount"
+              required
+              type="number"
+              min="1"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+              placeholder="0.00"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="pay-mode">
+              Payment Mode <span className="text-red-500">*</span>
+            </label>
+            <select
+              id="pay-mode"
+              value={paymentMode}
+              onChange={(e) => setPaymentMode(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+            >
+              {['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CHEQUE'].map((m) => (
+                <option key={m} value={m}>{m.replace('_', ' ')}</option>
+              ))}
+            </select>
+          </div>
+
+          {paymentMode !== 'CASH' && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="pay-ref">
+                Reference / UTR Number
+              </label>
+              <input
+                id="pay-ref"
+                value={referenceNumber}
+                onChange={(e) => setReferenceNumber(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                placeholder="Optional"
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="pay-notes">
+              Notes
+            </label>
+            <input
+              id="pay-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+              placeholder="Optional..."
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg disabled:opacity-60 flex items-center gap-2 transition-colors"
+            >
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {saving ? 'Recording...' : 'Record Payment'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function CustomerLedgerPage() {
@@ -633,6 +824,9 @@ export default function CustomerLedgerPage() {
 
   // Dialog state
   const [dialog, setDialog] = useState<'credit' | 'deactivate' | 'restore' | 'permDelete' | null>(null);
+
+  // Inline payment modal state
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
 
   // User info for role-based visibility
   const [userInfo, setUserInfo] = useState<{ role: string } | null>(null);
@@ -880,6 +1074,25 @@ export default function CustomerLedgerPage() {
         />
       )}
 
+      {/* ─── Inline Record Payment Modal ─────────────────────────────────── */}
+      {showPaymentModal && cust && (
+        <RecordPaymentModal
+          customerId={cust.id}
+          customerName={cust.fullName}
+          currentBalance={
+            summ
+              ? `${summ.closingBalance}${summ.closingBalanceLabel && summ.closingBalanceLabel !== 'Settled' ? ` ${summ.closingBalanceLabel}` : ''}`
+              : '—'
+          }
+          onSuccess={() => {
+            setShowPaymentModal(false);
+            showToast('Payment recorded successfully.');
+            fetchLedger();
+          }}
+          onClose={() => setShowPaymentModal(false)}
+        />
+      )}
+
       {/* ─── Print styles (injected in head via style tag) ─────────────────── */}
       <style>{`
         @media print {
@@ -1054,13 +1267,13 @@ export default function CustomerLedgerPage() {
                             <FileText className="h-3.5 w-3.5" aria-hidden="true" />
                             <span className="hidden sm:inline">Create </span>Invoice
                           </Link>
-                          <Link
-                            href={`/dashboard/credit?customerId=${cust.id}`}
+                          <button
+                            onClick={() => setShowPaymentModal(true)}
                             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm min-h-[36px]"
                           >
                             <CreditCard className="h-3.5 w-3.5" aria-hidden="true" />
                             <span className="hidden sm:inline">Record </span>Payment
-                          </Link>
+                          </button>
                         </>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-amber-100 text-amber-700 border border-amber-200 min-h-[36px]">
@@ -1270,7 +1483,7 @@ export default function CustomerLedgerPage() {
               {!loading && displayedEntries.length === 0 && (
                 <EmptyState
                   onCreateInvoice={() => router.push(`/dashboard/sales?customerId=${customerId}`)}
-                  onRecordPayment={() => router.push(`/dashboard/credit?customerId=${customerId}`)}
+                  onRecordPayment={() => setShowPaymentModal(true)}
                 />
               )}
 
