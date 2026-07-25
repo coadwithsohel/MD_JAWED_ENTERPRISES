@@ -31,7 +31,7 @@ const initialForm = {
 };
 
 type StatusFilter = 'active' | 'inactive' | 'all';
-type CreditFilter = '' | 'exceeded' | 'near' | 'outstanding' | 'advance';
+type CreditFilter = '' | 'exceeded' | 'near' | 'outstanding' | 'advance' | 'cleared';
 
 interface Toast { id: number; message: string; type: 'success' | 'error'; }
 
@@ -75,6 +75,7 @@ const CREDIT_FILTERS: { value: CreditFilter; label: string }[] = [
   { value: 'near', label: 'Near Limit' },
   { value: 'outstanding', label: 'Has Outstanding' },
   { value: 'advance', label: 'Has Advance' },
+  { value: 'cleared', label: 'Cleared (Zero Balance)' },
 ];
 
 function CustomerCard({

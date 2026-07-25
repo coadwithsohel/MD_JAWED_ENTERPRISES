@@ -4,13 +4,44 @@ import { useState, useEffect, useCallback } from 'react';
 import { Search, Loader2, ArrowUpRight, ArrowDownRight, Phone, X, IndianRupee, Plus } from 'lucide-react';
 
 interface LedgerEntry {
-  id: string; createdAt: string; transactionType: string; amount: string;
-  balanceAfter: string; description?: string | null;
+  id: string;
+  createdAt: string;
+  transactionType: string;
+  amount: string;
+  balanceAfter: string;
+  description?: string | null;
   customer: { id: string; customerCode: string; fullName: string; mobile: string };
-  sale?: { invoiceNumber: string } | null;
+  sale?: { invoiceNumber: string; createdAt: string } | null;
+  payment?: { receiptNumber: string; paymentDate: string } | null;
 }
 
 interface Customer { id: string; fullName: string; mobile: string; customerCode: string; currentBalance: string; }
+
+/** Returns today's date as YYYY-MM-DD in Asia/Kolkata timezone. */
+function todayIST(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+}
+
+/** Returns the canonical accounting date for a ledger row:
+ *  - PAYMENT_RECEIVED → payment.paymentDate
+ *  - CREDIT_SALE → sale.createdAt
+ *  - fallback → createdAt
+ */
+function getAccountingDate(l: LedgerEntry): Date {
+  if (l.transactionType === 'PAYMENT_RECEIVED' && l.payment?.paymentDate) {
+    return new Date(l.payment.paymentDate);
+  }
+  if (l.transactionType === 'CREDIT_SALE' && l.sale?.createdAt) {
+    return new Date(l.sale.createdAt);
+  }
+  return new Date(l.createdAt);
+}
+
+function fmtDate(d: Date): string {
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+}
+
+const initialPaymentForm = { amount: '', paymentMode: 'CASH', referenceNumber: '', notes: '', paymentDate: todayIST() };
 
 export default function CreditPage() {
   const [ledgers, setLedgers] = useState<LedgerEntry[]>([]);
@@ -22,7 +53,7 @@ export default function CreditPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerSearch, setCustomerSearch] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [paymentForm, setPaymentForm] = useState({ amount: '', paymentMode: 'CASH', referenceNumber: '', notes: '' });
+  const [paymentForm, setPaymentForm] = useState(initialPaymentForm);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -34,7 +65,7 @@ export default function CreditPage() {
       const res = await fetch(`/api/credit${debouncedSearch ? `?search=${encodeURIComponent(debouncedSearch)}` : ''}`);
       const data = await res.json();
       setLedgers(data.ledgers ?? []);
-      setSummary(data.summary ?? { totalPending: 0, customersWithDues: 0 });
+      setSummary(data.summary ?? { totalPending: 0, customersWithDues: 0, recentPaymentsAmount: 0, recentPaymentsCount: 0 });
     } catch {} finally { setLoading(false); }
   }, [debouncedSearch]);
 
@@ -55,6 +86,7 @@ export default function CreditPage() {
     setFormError('');
     if (!selectedCustomer) { setFormError('Please select a customer'); return; }
     if (!paymentForm.amount || Number(paymentForm.amount) <= 0) { setFormError('Enter a valid amount'); return; }
+    if (!paymentForm.paymentDate) { setFormError('Payment date is required'); return; }
     setSaving(true);
     try {
       const res = await fetch('/api/payments', {
@@ -66,13 +98,15 @@ export default function CreditPage() {
           paymentMode: paymentForm.paymentMode,
           referenceNumber: paymentForm.referenceNumber || null,
           notes: paymentForm.notes || null,
+          paymentDate: paymentForm.paymentDate, // send YYYY-MM-DD
         }),
       });
       const data = await res.json();
       if (!res.ok) { setFormError(data.error || 'Failed to record payment'); return; }
       setShowModal(false);
       setSelectedCustomer(null);
-      setPaymentForm({ amount: '', paymentMode: 'CASH', referenceNumber: '', notes: '' });
+      setCustomerSearch('');
+      setPaymentForm(initialPaymentForm);
       fetchData();
     } catch { setFormError('Network error'); }
     finally { setSaving(false); }
@@ -84,7 +118,7 @@ export default function CreditPage() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-2xl font-bold text-slate-900">Credit Management</h1>
-        <button onClick={() => { setShowModal(true); setFormError(''); }} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold">
+        <button onClick={() => { setShowModal(true); setFormError(''); setPaymentForm({ ...initialPaymentForm, paymentDate: todayIST() }); }} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold">
           <Plus className="h-4 w-4" /> Record Payment
         </button>
       </div>
@@ -134,7 +168,7 @@ export default function CreditPage() {
               ) : ledgers.map((l) => (
                 <tr key={l.id} className="hover:bg-slate-50 transition-colors">
                   <td className="px-5 py-3 text-sm text-slate-500 whitespace-nowrap">
-                    {new Date(l.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}
+                    {fmtDate(getAccountingDate(l))}
                   </td>
                   <td className="px-5 py-3 whitespace-nowrap">
                     <p className="text-sm font-medium text-slate-900">{l.customer?.fullName}</p>
@@ -195,6 +229,18 @@ export default function CreditPage() {
                     <button type="button" onClick={() => setSelectedCustomer(null)} className="text-blue-400 hover:text-blue-600"><X className="h-4 w-4" /></button>
                   </div>
                 )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Payment Date *</label>
+                <input
+                  required
+                  type="date"
+                  value={paymentForm.paymentDate}
+                  max={todayIST()}
+                  onChange={(e) => setPaymentForm({ ...paymentForm, paymentDate: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                <p className="mt-1 text-xs text-slate-400">Defaults to today. You may select an earlier date for backdated entries.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Amount (₹) *</label>

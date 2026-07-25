@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
   // Status filter: 'active' (default) | 'inactive' | 'all'
   const statusFilter = url.searchParams.get("status") ?? "active";
 
-  // Credit status filter: 'exceeded' | 'near' | 'outstanding' | 'advance'
+  // Credit status filter: 'exceeded' | 'near' | 'outstanding' | 'advance' | 'cleared'
   const creditFilter = url.searchParams.get("creditStatus") ?? "";
 
   // Build base where clause
@@ -60,6 +60,9 @@ export async function GET(req: NextRequest) {
   } else if (creditFilter === "advance") {
     // currentBalance < 0 means customer has advance/credit balance
     where.currentBalance = { lt: 0 };
+  } else if (creditFilter === "cleared") {
+    // currentBalance = 0 means fully cleared
+    where.currentBalance = 0;
   } else if (creditFilter === "exceeded") {
     // creditLimit > 0 AND currentBalance > creditLimit
     where.creditLimit = { gt: 0 };
@@ -68,6 +71,11 @@ export async function GET(req: NextRequest) {
   } else if (creditFilter === "near") {
     where.creditLimit = { gt: 0 };
     where.currentBalance = { gt: 0 };
+  } else if (statusFilter === "active" && !creditFilter) {
+    // DEFAULT ACTIVE VIEW: hide cleared customers (balance = 0)
+    // Customers with zero balance are still active but don't need attention in default view.
+    // They remain visible via 'All' tab, direct URL, or 'Cleared' filter.
+    where.currentBalance = { not: 0 };
   }
 
   // Search

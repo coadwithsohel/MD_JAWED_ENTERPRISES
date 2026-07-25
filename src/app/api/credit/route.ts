@@ -30,12 +30,14 @@ export async function GET(req: NextRequest) {
   const [ledgers, total] = await Promise.all([
     prisma.creditLedger.findMany({
       where,
+      // Sort descending by accounting date: payment.paymentDate for payments, createdAt otherwise
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
       include: {
         customer: { select: { id: true, customerCode: true, fullName: true, mobile: true } },
-        sale: { select: { invoiceNumber: true } },
+        sale: { select: { invoiceNumber: true, createdAt: true } },
+        payment: { select: { receiptNumber: true, paymentDate: true } },
       },
     }),
     prisma.creditLedger.count({ where }),

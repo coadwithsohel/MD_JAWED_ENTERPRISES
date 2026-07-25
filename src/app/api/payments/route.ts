@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/auth';
 import { Decimal } from '@prisma/client/runtime/library';
 import { generateReceiptNumber } from '@/lib/counters';
+import { startOfDayIST } from '@/lib/accounting';
 
 const PaymentSchema = z.object({
   customerId: z.string(),
@@ -12,7 +13,26 @@ const PaymentSchema = z.object({
   paymentMode: z.enum(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CHEQUE', 'OTHER']),
   referenceNumber: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
+  // ISO date string YYYY-MM-DD or full ISO datetime. Defaults to today.
+  paymentDate: z.string().optional().nullable(),
 });
+
+/** Parse a YYYY-MM-DD or full ISO datetime string to a UTC Date representing the start of that IST day. */
+function parsePaymentDate(raw: string | null | undefined): Date {
+  if (!raw) return startOfDayIST(new Date());
+  // Try full ISO first
+  const d = new Date(raw);
+  if (!isNaN(d.getTime())) {
+    // If it looks like a date-only string (YYYY-MM-DD), interpret as IST start of day
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) {
+      // Build a date in IST: YYYY-MM-DDT00:00:00+05:30
+      const istDate = new Date(`${raw.trim()}T00:00:00+05:30`);
+      return isNaN(istDate.getTime()) ? startOfDayIST(new Date()) : istDate;
+    }
+    return d;
+  }
+  return startOfDayIST(new Date());
+}
 
 export async function POST(req: NextRequest) {
   const { auth, error } = await requireAuth(req);
@@ -25,7 +45,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
     }
 
-    const { customerId, saleId, amount, paymentMode, referenceNumber, notes } = parsed.data;
+    const { customerId, saleId, amount, paymentMode, referenceNumber, notes, paymentDate: rawDate } = parsed.data;
+
+    // Resolve the accounting date — use user-selected date, not createdAt
+    const resolvedPaymentDate = parsePaymentDate(rawDate);
 
     const result = await prisma.$transaction(async (tx) => {
       const customer = await tx.customer.findUnique({ where: { id: customerId } });
@@ -44,7 +67,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Create payment record
+      // Create payment record with the user-selected paymentDate
       const receiptNumber = await generateReceiptNumber();
       const payment = await tx.payment.create({
         data: {
@@ -52,10 +75,11 @@ export async function POST(req: NextRequest) {
           customerId,
           saleId: saleId ?? null,
           amount: payAmt,
-          paymentMode: paymentMode as "CASH" | "UPI" | "CARD" | "BANK_TRANSFER" | "CHEQUE" | "OTHER",
+          paymentMode: paymentMode as 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'CHEQUE' | 'OTHER',
           referenceNumber: referenceNumber ?? null,
           notes: notes ?? null,
           receivedById: auth.userId,
+          paymentDate: resolvedPaymentDate,
         },
       });
 
@@ -70,7 +94,7 @@ export async function POST(req: NextRequest) {
           data: {
             paidAmount: newPaid,
             pendingAmount: newPending,
-            paymentStatus: newPaymentStatus as "PAID" | "PARTIALLY_PAID" | "UNPAID" | "OVERDUE",
+            paymentStatus: newPaymentStatus as 'PAID' | 'PARTIALLY_PAID' | 'UNPAID' | 'OVERDUE',
           },
         });
 
@@ -83,13 +107,12 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Update customer balance
+      // Update customer balance — canonical: subtract payment from outstanding
       const newBalance = customer.currentBalance.sub(payAmt);
-      const finalBalance = newBalance.lt(0) ? new Decimal(0) : newBalance;
-
+      // Allow balance to go negative (customer advanced payment)
       await tx.customer.update({
         where: { id: customerId },
-        data: { currentBalance: finalBalance },
+        data: { currentBalance: newBalance },
       });
 
       // Ledger entry
@@ -100,7 +123,7 @@ export async function POST(req: NextRequest) {
           paymentId: payment.id,
           transactionType: 'PAYMENT_RECEIVED',
           amount: payAmt,
-          balanceAfter: finalBalance,
+          balanceAfter: newBalance,
           description: `Payment received — ${paymentMode}${referenceNumber ? ` (Ref: ${referenceNumber})` : ''}`,
         },
       });
@@ -123,11 +146,11 @@ export async function POST(req: NextRequest) {
           action: 'CREATE',
           entityType: 'Payment',
           entityId: payment.id,
-          newData: { amount: amount.toString(), paymentMode, customerId, saleId },
+          newData: { amount: amount.toString(), paymentMode, customerId, saleId, paymentDate: resolvedPaymentDate.toISOString() },
         },
       });
 
-      return { payment, newBalance: finalBalance };
+      return { payment, newBalance };
     });
 
     return NextResponse.json(result, { status: 201 });

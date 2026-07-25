@@ -188,6 +188,7 @@ export async function GET(
           saleType: true,
           status: true,
           dueDate: true,
+          createdAt: true,
         },
       },
       payment: {
@@ -293,9 +294,16 @@ export async function GET(
     let sourceId = r.id;
     let status = "Completed";
 
+    // Use canonical accounting date:
+    //   Payment → payment.paymentDate (user-selected date)
+    //   Sale → sale.createdAt (invoice date)
+    //   Fallback → CreditLedger.createdAt
+    let accountingDate: Date = r.createdAt;
+
     if (r.sale) {
       voucherNumber = r.sale.invoiceNumber;
       sourceId = r.sale.id;
+      accountingDate = r.sale.createdAt ?? r.createdAt;
       status =
         r.sale.paymentStatus === "PAID"
           ? "Paid"
@@ -314,6 +322,7 @@ export async function GET(
     if (r.payment) {
       voucherNumber = r.payment.receiptNumber;
       sourceId = r.payment.id;
+      accountingDate = r.payment.paymentDate ?? r.createdAt;
       status = r.payment.status === "REVERSED" ? "Reversed" : "Completed";
       if (vType2 === "PAYMENT") {
         particulars = `Payment Received — ${r.payment.receiptNumber}`;
@@ -324,7 +333,7 @@ export async function GET(
 
     rawEntries.push({
       id: r.id,
-      date: r.createdAt,
+      date: accountingDate,
       particulars,
       voucherType: vType2,
       voucherNumber,
@@ -332,7 +341,7 @@ export async function GET(
       creditPaise: isDebit ? 0 : amtPaise,
       sourceId,
       status,
-      sortKey: r.createdAt.toISOString() + r.id,
+      sortKey: accountingDate.toISOString() + r.id,
     });
   }
 
