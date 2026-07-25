@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/auth';
 import { getOverdueSummary } from '@/lib/overdue';
-import { Decimal } from '@prisma/client/runtime/library';
+import { getTotalPendingCredit } from '@/lib/accounting';
 
 export async function GET(req: NextRequest) {
   const { error } = await requireAuth(req);
@@ -24,16 +24,7 @@ export async function GET(req: NextRequest) {
         _sum: { grandTotal: true, paidAmount: true },
         _count: { _all: true },
       }),
-      prisma.sale.aggregate({
-        where: {
-          status: { in: ['COMPLETED', 'PARTIALLY_RETURNED'] },
-          saleType: { in: ['CREDIT', 'PARTIAL'] },
-          pendingAmount: { gt: new Decimal(0) },
-          customer: { isActive: true, deletedAt: null },
-        },
-        _sum: { pendingAmount: true },
-        _count: { _all: true },
-      }),
+      getTotalPendingCredit(),
       prisma.product.count({ where: { stockQuantity: { lte: 5 }, isActive: true } }),
       prisma.customer.count({ where: { isActive: true, deletedAt: null } }),
       getOverdueSummary(),
@@ -53,8 +44,8 @@ export async function GET(req: NextRequest) {
       todayRevenue: todaySales._sum.grandTotal ?? 0,
       todayInvoices: todaySales._count._all,
       todayCashRevenue: todayCash._sum.grandTotal ?? 0,
-      pendingCreditTotal: pendingCredit._sum.pendingAmount ?? 0,
-      customersWithDues: pendingCredit._count._all,
+      pendingCreditTotal: pendingCredit.total,
+      customersWithDues: pendingCredit.count,
       lowStockCount,
       totalCustomers,
       overdueCount: overdueStats.overdueCount,
