@@ -37,7 +37,7 @@ export default function ChangeCreditLimitDialog({
 
   // Live preview calculations
   const parsedLimit = newLimit.trim() !== '' ? parseSafeDecimal(newLimit) : null;
-  const newLimitPaise = parsedLimit !== null ? Math.round(parsedLimit * 100) : null;
+  const newLimitPaise = parsedLimit !== null ? parsedLimit : null;
   const availablePaise = newLimitPaise !== null ? newLimitPaise - outstandingPaise : null;
   const isBelowOutstanding = newLimitPaise !== null && newLimitPaise > 0 && newLimitPaise < outstandingPaise;
   const isLimitExact = newLimitPaise !== null && newLimitPaise === outstandingPaise;

@@ -167,7 +167,7 @@ function CustomerCard({
               <>
                 <p className="text-xs text-slate-400">Outstanding</p>
                 <p className="font-bold text-rose-600 tabular-nums text-sm">
-                  {fromPaise(Math.round(balance * 100))}
+                  {formatINR(balance)}
                 </p>
                 <span className="text-xs font-bold bg-rose-50 text-rose-600 border border-rose-200 px-1.5 py-0.5 rounded">Dr</span>
               </>
@@ -175,7 +175,7 @@ function CustomerCard({
               <>
                 <p className="text-xs text-slate-400">Advance</p>
                 <p className="font-bold text-emerald-600 tabular-nums text-sm">
-                  {fromPaise(Math.abs(Math.round(balance * 100)))}
+                  {formatINR(Math.abs(balance))}
                 </p>
                 <span className="text-xs font-bold bg-emerald-50 text-emerald-600 border border-emerald-200 px-1.5 py-0.5 rounded">Cr</span>
               </>
