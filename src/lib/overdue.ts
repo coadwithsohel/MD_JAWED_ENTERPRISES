@@ -69,6 +69,7 @@ export interface OverdueDataResponse {
     overdueCustomers: number;
     overdueInvoices: number;
     totalOverdueAmount: Decimal;
+    criticalOverdueInvoices: number;
   };
 }
 
@@ -338,7 +339,7 @@ export async function getOverdueData(options?: {
       total: 0,
       page,
       pages: 0,
-      summary: { overdueCustomers: 0, overdueInvoices: 0, totalOverdueAmount: new Decimal(0) },
+      summary: { overdueCustomers: 0, overdueInvoices: 0, totalOverdueAmount: new Decimal(0), criticalOverdueInvoices: 0 },
     };
   }
 
@@ -406,6 +407,7 @@ export async function getOverdueData(options?: {
     (a, b) => a.effectiveDueDate.getTime() - b.effectiveDueDate.getTime(),
   );
 
+  const criticalOverdueInvoices = filteredInvoices.filter((i) => i.daysOverdue > 30).length;
   const total = filteredInvoices.length;
   const pagedInvoices = filteredInvoices.slice(skip, skip + limit);
 
@@ -464,6 +466,7 @@ export async function getOverdueData(options?: {
       overdueCustomers: customersAgg.length,
       overdueInvoices: total,
       totalOverdueAmount,
+      criticalOverdueInvoices,
     },
   };
 }
@@ -481,9 +484,10 @@ export async function getOverdueSummary(): Promise<{
   overdueCount: number;
   overdueAmount: Decimal;
 }> {
-  const { totalCount, totalAmount } = await getSalesWithFifoAllocation();
+  const { getTotalOverdue } = await import("./accounting");
+  const { total, count } = await getTotalOverdue();
   return {
-    overdueCount: totalCount,
-    overdueAmount: totalAmount,
+    overdueCount: count,
+    overdueAmount: total,
   };
 }

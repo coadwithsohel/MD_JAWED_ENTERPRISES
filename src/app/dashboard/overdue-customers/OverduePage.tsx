@@ -31,6 +31,12 @@ interface OverduePageData {
   invoices: OverdueInvoice[];
   customers: OverdueCustomer[];
   total: number;
+  summary?: {
+    overdueCustomers: number;
+    overdueInvoices: number;
+    totalOverdueAmount: number | string;
+    criticalOverdueInvoices?: number;
+  };
 }
 
 export default function OverduePage({ initialData }: { initialData: OverduePageData }) {
@@ -63,7 +69,10 @@ export default function OverduePage({ initialData }: { initialData: OverduePageD
     );
   });
 
-  const totalOverdue = initialData.invoices.reduce((sum, i) => sum + parseFloat(i.remainingAfterAllocation ?? i.pendingAmount), 0);
+  const totalOverdue = initialData.summary?.totalOverdueAmount ?? initialData.invoices.reduce((sum, i) => sum + parseFloat(i.remainingAfterAllocation ?? i.pendingAmount), 0);
+  const totalCustomersCount = initialData.summary?.overdueCustomers ?? initialData.customers.length;
+  const totalInvoicesCount = initialData.summary?.overdueInvoices ?? initialData.total;
+  const criticalCount = initialData.summary?.criticalOverdueInvoices ?? initialData.invoices.filter((i) => i.daysOverdue > 30).length;
 
   const daysBadgeColor = (days: number) => {
     if (days <= 7) return 'bg-amber-100 text-amber-800';
@@ -82,7 +91,7 @@ export default function OverduePage({ initialData }: { initialData: OverduePageD
             <h1 className="text-2xl font-bold text-slate-900">Overdue Customers</h1>
           </div>
           <p className="text-sm text-slate-500 mt-0.5">
-            {initialData.customers.length} customers · {initialData.invoices.length} invoices · {fmt(totalOverdue)} total pending
+            {totalCustomersCount} customers · {totalInvoicesCount} invoices · {fmt(totalOverdue)} total pending
           </p>
         </div>
       </div>
@@ -91,9 +100,9 @@ export default function OverduePage({ initialData }: { initialData: OverduePageD
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label: 'Total Overdue', value: fmt(totalOverdue), color: 'text-red-600' },
-          { label: 'Customers', value: String(initialData.customers.length), color: 'text-orange-600' },
-          { label: 'Invoices', value: String(initialData.invoices.length), color: 'text-amber-600' },
-          { label: 'Critical (>30d)', value: String(initialData.invoices.filter((i) => i.daysOverdue > 30).length), color: 'text-red-700' },
+          { label: 'Customers', value: String(totalCustomersCount), color: 'text-orange-600' },
+          { label: 'Invoices', value: String(totalInvoicesCount), color: 'text-amber-600' },
+          { label: 'Critical (>30d)', value: String(criticalCount), color: 'text-red-700' },
         ].map((s) => (
           <div key={s.label} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
             <p className="text-xs text-slate-500">{s.label}</p>

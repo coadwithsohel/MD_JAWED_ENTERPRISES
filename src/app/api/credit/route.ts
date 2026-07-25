@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/auth';
 import { Prisma } from '@prisma/client';
-import { Decimal } from '@prisma/client/runtime/library';
-import { getTotalPendingCredit } from '@/lib/accounting';
+import { getTotalPendingCredit, getRecentPaymentsSummary } from '@/lib/accounting';
 
 export async function GET(req: NextRequest) {
   const { error } = await requireAuth(req);
@@ -44,23 +43,7 @@ export async function GET(req: NextRequest) {
 
   // FIX: Use canonical accounting summary instead of Sale.pendingAmount
   const pendingCredit = await getTotalPendingCredit();
-
-  // FIX: Recent Payments - use last 30 days from CreditLedger PAYMENT_RECEIVED
-  // This is the canonical source, not Payment table which may miss imported records
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  
-  const recentPaymentsAgg = await prisma.creditLedger.aggregate({
-    where: {
-      transactionType: 'PAYMENT_RECEIVED',
-      createdAt: { gte: thirtyDaysAgo },
-    },
-    _sum: { amount: true },
-    _count: { _all: true },
-  });
-
-  const recentPaymentsAmount = recentPaymentsAgg._sum.amount ?? new Decimal(0);
-  const recentPaymentsCount = recentPaymentsAgg._count._all;
+  const { recentPaymentsAmount, recentPaymentsCount } = await getRecentPaymentsSummary();
 
   return NextResponse.json({
     ledgers,

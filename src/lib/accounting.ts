@@ -28,6 +28,16 @@ export function startOfDayIST(date: Date): Date {
 }
 
 /**
+ * Get end of day for a given date in IST timezone.
+ */
+export function endOfDayIST(date: Date): Date {
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(date.getTime() + istOffset);
+  istDate.setUTCHours(23, 59, 59, 999);
+  return new Date(istDate.getTime() - istOffset);
+}
+
+/**
  * Overdue date calculation — SINGLE SHARED HELPER.
  *
  * The business rule is FIXED at 15 days from the original bill date.
@@ -398,5 +408,38 @@ export async function getTotalOverdue(): Promise<{ total: Decimal; count: number
   return {
     total: totalOverdue,
     count,
+  };
+}
+
+/**
+ * Get recent payments summary for the last 30 days.
+ * Inclusive date range:
+ *   paymentDate >= startOfDay(today - 30 days)
+ *   paymentDate <= endOfDay(today)
+ * Uses paymentDate.
+ */
+export async function getRecentPaymentsSummary(): Promise<{
+  recentPaymentsAmount: Decimal;
+  recentPaymentsCount: number;
+}> {
+  const today = getISTStartOfToday();
+  const thirtyDaysAgo = startOfDayIST(new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000));
+  const endOfToday = endOfDayIST(today);
+
+  const agg = await prisma.payment.aggregate({
+    where: {
+      status: "COMPLETED",
+      paymentDate: {
+        gte: thirtyDaysAgo,
+        lte: endOfToday,
+      },
+    },
+    _sum: { amount: true },
+    _count: { _all: true },
+  });
+
+  return {
+    recentPaymentsAmount: agg._sum.amount ?? new Decimal(0),
+    recentPaymentsCount: agg._count._all,
   };
 }
