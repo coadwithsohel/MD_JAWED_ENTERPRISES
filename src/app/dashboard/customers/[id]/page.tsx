@@ -44,6 +44,11 @@ import ChangeCreditLimitDialog from '@/components/customers/ChangeCreditLimitDia
 import DeactivateDialog from '@/components/customers/DeactivateDialog';
 import RestoreDialog from '@/components/customers/RestoreDialog';
 import PermanentDeleteDialog from '@/components/customers/PermanentDeleteDialog';
+import TransactionRowMenu from '@/components/customers/TransactionRowMenu';
+import EditCustomerModal from '@/components/customers/EditCustomerModal';
+import EditSaleModal from '@/components/customers/EditSaleModal';
+import EditPaymentModal from '@/components/customers/EditPaymentModal';
+import VoidConfirmModal from '@/components/customers/VoidConfirmModal';
 import { toPaise, fromPaise, formatINR } from '@/lib/money';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -69,6 +74,11 @@ interface LedgerEntry {
   balanceLabel: 'Dr' | 'Cr' | 'Settled';
   sourceId: string;
   status: string;
+  // ─── Edit metadata (added by ledger API) ──────────────────────────────────────
+  sourceModel?: 'Sale' | 'Payment' | 'Customer' | null;
+  canonicalId?: string;
+  editable?: boolean;
+  recordUpdatedAt?: string | null;
 }
 
 interface LedgerSummary {
@@ -100,6 +110,32 @@ interface CustomerInfo {
   creditLimitUpdatedAt?: string | null;
   creditLimitUpdatedBy?: string | null;
   deletedAt?: string | null;
+}
+
+interface CustomerEditData {
+  id: string;
+  fullName: string;
+  mobile: string;
+  alternateMobile?: string | null;
+  email?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pinCode?: string | null;
+  creditLimit?: string;
+  openingBalance?: string;
+  isActive: boolean;
+  updatedAt: string;
+}
+
+interface VoidTarget {
+  id: string;
+  type: 'Sale' | 'Payment';
+  label: string;
+  amount: string;
+  date: string;
+  updatedAt: string;
+  customerId: string;
 }
 
 interface LedgerResponse {
@@ -451,6 +487,7 @@ function InlineActionMenu({
   handlePrint,
   userInfo,
   setDialog,
+  onEditCustomer,
   cust,
 }: {
   showActions: boolean;
@@ -459,6 +496,7 @@ function InlineActionMenu({
   handlePrint: () => void;
   userInfo: { role: string } | null;
   setDialog: (d: 'credit' | 'deactivate' | 'restore' | 'permDelete' | null) => void;
+  onEditCustomer: () => void;
   cust: CustomerInfo;
 }) {
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -552,6 +590,14 @@ function InlineActionMenu({
           {(userInfo?.role === 'OWNER' || userInfo?.role === 'MANAGER') && (
             <>
               <div className="my-1 border-t border-slate-100" role="separator" />
+              <button
+                onClick={() => { onEditCustomer(); setShowActions(false); }}
+                className="w-full flex items-center gap-2.5 px-4 py-3 sm:py-2.5 text-sm text-blue-700 hover:bg-blue-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 focus-visible:outline-none"
+                role="menuitem"
+              >
+                <User className="h-4 w-4 text-blue-500 shrink-0" aria-hidden="true" />
+                Edit Customer
+              </button>
               <button
                 onClick={() => { setDialog('credit'); setShowActions(false); }}
                 className="w-full flex items-center gap-2.5 px-4 py-3 sm:py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 focus-visible:outline-none"
@@ -828,6 +874,71 @@ export default function CustomerLedgerPage() {
   // Inline payment modal state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
 
+  // ─── Edit / Void modal state ─────────────────────────────────────────────────────────────────
+  const [editCustomerData, setEditCustomerData] = useState<CustomerEditData | null>(null);
+  const [editSaleId, setEditSaleId] = useState<string | null>(null);
+  const [editPaymentId, setEditPaymentId] = useState<string | null>(null);
+  const [voidTarget, setVoidTarget] = useState<VoidTarget | null>(null);
+
+  /** Open Edit Customer modal — builds CustomerEditData from current ledger data */
+  function openEditCustomer() {
+    const cust = data?.customer;
+    if (!cust) return;
+    // We need updatedAt — fetch it from /api/customers/:id
+    fetch(`/api/customers/${customerId}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.customer || d.id) {
+          const c = d.customer ?? d;
+          setEditCustomerData({
+            id: c.id,
+            fullName: c.fullName,
+            mobile: c.mobile,
+            alternateMobile: c.alternateMobile,
+            email: c.email,
+            address: c.address,
+            city: c.city,
+            state: c.state,
+            pinCode: c.pinCode,
+            creditLimit: c.creditLimit ? String(c.creditLimit) : undefined,
+            openingBalance: c.openingBalance ? String(c.openingBalance) : undefined,
+            isActive: c.isActive,
+            updatedAt: c.updatedAt,
+          });
+        }
+      })
+      .catch(() => showToast('Failed to load customer for edit', 'error'));
+  }
+
+  /** Open Edit Sale modal */
+  function openEditSale(entry: LedgerEntry) {
+    if (entry.sourceModel === 'Sale' && entry.canonicalId) {
+      setEditSaleId(entry.canonicalId);
+    }
+  }
+
+  /** Open Edit Payment modal */
+  function openEditPayment(entry: LedgerEntry) {
+    if (entry.sourceModel === 'Payment' && entry.canonicalId) {
+      setEditPaymentId(entry.canonicalId);
+    }
+  }
+
+  /** Open Void confirm for a Sale or Payment row */
+  function openVoid(entry: LedgerEntry) {
+    if (!entry.editable || !entry.canonicalId || !entry.recordUpdatedAt) return;
+    const type = entry.sourceModel as 'Sale' | 'Payment';
+    setVoidTarget({
+      id: entry.canonicalId,
+      type,
+      label: entry.voucherNumber || entry.particulars.slice(0, 40),
+      amount: entry.debit || entry.credit,
+      date: fmtDate(entry.date),
+      updatedAt: entry.recordUpdatedAt,
+      customerId: customerId as string,
+    });
+  }
+
   // User info for role-based visibility
   const [userInfo, setUserInfo] = useState<{ role: string } | null>(null);
 
@@ -1093,6 +1204,59 @@ export default function CustomerLedgerPage() {
         />
       )}
 
+      {/* ─── Edit / Void Modals ───────────────────────────────────────────── */}
+      {editCustomerData && (
+        <EditCustomerModal
+          customer={editCustomerData}
+          onSuccess={() => {
+            setEditCustomerData(null);
+            showToast('Customer updated successfully.');
+            fetchLedger();
+          }}
+          onClose={() => setEditCustomerData(null)}
+        />
+      )}
+
+      {editSaleId && (
+        <EditSaleModal
+          saleId={editSaleId}
+          customerId={customerId as string}
+          onSuccess={() => {
+            setEditSaleId(null);
+            showToast('Sale updated successfully.');
+            fetchLedger();
+          }}
+          onClose={() => setEditSaleId(null)}
+        />
+      )}
+
+      {editPaymentId && (
+        <EditPaymentModal
+          paymentId={editPaymentId}
+          customerId={customerId as string}
+          onSuccess={() => {
+            setEditPaymentId(null);
+            showToast('Payment updated successfully.');
+            fetchLedger();
+          }}
+          onClose={() => setEditPaymentId(null)}
+        />
+      )}
+
+      {voidTarget && (
+        <VoidConfirmModal
+          target={voidTarget}
+          onSuccess={() => {
+            setVoidTarget(null);
+            showToast(`${voidTarget.type} voided. Record preserved in audit history.`);
+            fetchLedger();
+          }}
+          onClose={() => setVoidTarget(null)}
+        />
+      )}
+
+
+
       {/* ─── Print styles (injected in head via style tag) ─────────────────── */}
       <style>{`
         @media print {
@@ -1290,6 +1454,7 @@ export default function CustomerLedgerPage() {
                         handlePrint={handlePrint}
                         userInfo={userInfo}
                         setDialog={setDialog}
+                        onEditCustomer={openEditCustomer}
                         cust={cust}
                       />
                     </div>
@@ -1581,15 +1746,24 @@ export default function CustomerLedgerPage() {
                                 </span>
                               </td>
                               <td className="px-4 py-3">
-                                {isClickable && (
-                                  <button
-                                    onClick={() => handleNavigate(entry)}
-                                    className="text-slate-300 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded"
-                                    aria-label={`View ${entry.voucherType === 'SALE' ? 'invoice' : 'payment'} ${entry.voucherNumber}`}
-                                  >
-                                    <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                                  </button>
-                                )}
+                                <div className="flex items-center gap-1">
+                                  {isClickable && (
+                                    <button
+                                      onClick={() => handleNavigate(entry)}
+                                      className="text-slate-300 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded"
+                                      aria-label={`View ${entry.voucherType === 'SALE' ? 'invoice' : 'payment'} ${entry.voucherNumber}`}
+                                    >
+                                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                                    </button>
+                                  )}
+                                  {entry.editable && (entry.sourceModel === 'Sale' || entry.sourceModel === 'Payment') && (userInfo?.role === 'OWNER' || userInfo?.role === 'MANAGER') && (
+                                    <TransactionRowMenu
+                                      voucherType={entry.voucherType === 'SALE' ? 'SALE' : 'PAYMENT'}
+                                      onEdit={() => entry.sourceModel === 'Sale' ? openEditSale(entry) : openEditPayment(entry)}
+                                      onVoid={() => openVoid(entry)}
+                                    />
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );

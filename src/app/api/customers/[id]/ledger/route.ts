@@ -25,6 +25,11 @@ interface LedgerEntry {
   balanceLabel: string; // "Dr" | "Cr" | "Settled"
   sourceId: string;
   status: string;
+  // ─── Edit metadata ───────────────────────────────────────────────────────
+  sourceModel: 'Sale' | 'Payment' | 'Customer' | null; // canonical record model
+  canonicalId: string;    // ID of the canonical record to PATCH
+  editable: boolean;       // true if admin can edit/void this row
+  recordUpdatedAt: string | null; // sale.updatedAt or payment.updatedAt — for optimistic concurrency
 }
 
 // ─── Safe integer-paise arithmetic ───────────────────────────────────────────
@@ -188,7 +193,9 @@ export async function GET(
           saleType: true,
           status: true,
           dueDate: true,
+          saleDate: true,
           createdAt: true,
+          updatedAt: true,
         },
       },
       payment: {
@@ -199,6 +206,7 @@ export async function GET(
           paymentMode: true,
           paymentDate: true,
           status: true,
+          updatedAt: true,
         },
       },
     },
@@ -230,7 +238,9 @@ export async function GET(
       saleType: true,
       status: true,
       dueDate: true,
+      saleDate: true,
       createdAt: true,
+      updatedAt: true,
     },
   });
 
@@ -250,6 +260,7 @@ export async function GET(
       paymentMode: true,
       paymentDate: true,
       status: true,
+      updatedAt: true,
     },
   });
 
@@ -281,6 +292,11 @@ export async function GET(
     sourceId: string;
     status: string;
     sortKey: string; // for stable sort: ISO + id
+    // edit metadata
+    sourceModel: 'Sale' | 'Payment' | 'Customer' | null;
+    canonicalId: string;
+    editable: boolean;
+    recordUpdatedAt: string | null;
   }> = [];
 
   // From CreditLedger records (OPENING_BALANCE rows already excluded above)
@@ -303,7 +319,7 @@ export async function GET(
     if (r.sale) {
       voucherNumber = r.sale.invoiceNumber;
       sourceId = r.sale.id;
-      accountingDate = r.sale.createdAt ?? r.createdAt;
+      accountingDate = r.sale.saleDate ?? r.sale.createdAt ?? r.createdAt;
       status =
         r.sale.paymentStatus === "PAID"
           ? "Paid"
@@ -331,6 +347,26 @@ export async function GET(
       }
     }
 
+    // Determine edit metadata
+    let entrySourceModel: 'Sale' | 'Payment' | 'Customer' | null = null;
+    let entryCanonicalId = r.id; // fallback to CreditLedger id
+    let entryEditable = false;
+    let entryRecordUpdatedAt: string | null = null;
+
+    if (r.sale) {
+      entrySourceModel = 'Sale';
+      entryCanonicalId = r.sale.id;
+      // Only editable if not voided (sale.status != CANCELLED due to void)
+      // We check this by whether the sale has a paymentStatus (active sales always have it)
+      entryEditable = r.sale.status !== 'CANCELLED';
+      entryRecordUpdatedAt = r.sale.updatedAt ? new Date(r.sale.updatedAt).toISOString() : null;
+    } else if (r.payment) {
+      entrySourceModel = 'Payment';
+      entryCanonicalId = r.payment.id;
+      entryEditable = r.payment.status !== 'VOIDED' && r.payment.status !== 'REVERSED';
+      entryRecordUpdatedAt = r.payment.updatedAt ? new Date(r.payment.updatedAt).toISOString() : null;
+    }
+
     rawEntries.push({
       id: r.id,
       date: accountingDate,
@@ -342,6 +378,10 @@ export async function GET(
       sourceId,
       status,
       sortKey: accountingDate.toISOString() + r.id,
+      sourceModel: entrySourceModel,
+      canonicalId: entryCanonicalId,
+      editable: entryEditable,
+      recordUpdatedAt: entryRecordUpdatedAt,
     });
   }
 
@@ -349,7 +389,7 @@ export async function GET(
   for (const s of orphanedSales) {
     rawEntries.push({
       id: `sale-${s.id}`,
-      date: s.createdAt,
+      date: s.saleDate ?? s.createdAt,
       particulars: `Sales Invoice — ${s.invoiceNumber}`,
       voucherType: "SALE",
       voucherNumber: s.invoiceNumber,
@@ -364,7 +404,11 @@ export async function GET(
             : s.paymentStatus === "OVERDUE"
               ? "Overdue"
               : "Unpaid",
-      sortKey: s.createdAt.toISOString() + s.id,
+      sortKey: (s.saleDate ?? s.createdAt).toISOString() + s.id,
+      sourceModel: 'Sale' as const,
+      canonicalId: s.id,
+      editable: s.status !== 'CANCELLED',
+      recordUpdatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : null,
     });
   }
 
@@ -379,8 +423,12 @@ export async function GET(
       debitPaise: 0,
       creditPaise: toPaise(p.amount),
       sourceId: p.id,
-      status: p.status === "REVERSED" ? "Reversed" : "Completed",
+      status: p.status === "REVERSED" ? "Reversed" : p.status === "VOIDED" ? "Voided" : "Completed",
       sortKey: p.paymentDate.toISOString() + p.id,
+      sourceModel: 'Payment' as const,
+      canonicalId: p.id,
+      editable: p.status !== 'VOIDED' && p.status !== 'REVERSED',
+      recordUpdatedAt: p.updatedAt ? new Date(p.updatedAt).toISOString() : null,
     });
   }
 
@@ -397,6 +445,10 @@ export async function GET(
       sourceId: t.id,
       status: "Imported",
       sortKey: t.transactionDate.toISOString() + t.id,
+      sourceModel: null,
+      canonicalId: t.id,
+      editable: false, // legacy imported rows not editable through this path
+      recordUpdatedAt: null,
     });
   }
 
@@ -423,6 +475,10 @@ export async function GET(
     sourceId: customer.id,
     status: "Posted",
     sortKey: "0000-00-00" + customer.id,
+    sourceModel: 'Customer' as const,
+    canonicalId: customer.id,
+    editable: false, // Opening balance edited through customer edit, not transaction row
+    recordUpdatedAt: null,
   };
 
   const allEntries = [openingEntry, ...rawEntries];
@@ -458,6 +514,11 @@ export async function GET(
       balanceLabel: balanceLabel(runningPaise),
       sourceId: entry.sourceId,
       status: entry.status,
+      // Edit metadata
+      sourceModel: entry.sourceModel,
+      canonicalId: entry.canonicalId,
+      editable: entry.editable,
+      recordUpdatedAt: entry.recordUpdatedAt,
     };
   });
 

@@ -316,6 +316,10 @@ model Sale {
   paymentStatus      PaymentStatus
   status             SaleStatus          @default(COMPLETED)
   notes              String?
+  // ─── Edit/Void tracking ────────────────────────────────────────────────────
+  saleDate           DateTime?           // User-editable display date; null means use createdAt
+  voidedAt           DateTime?           // Set when voided; null = active
+  voidReason         String?             // Reason provided by admin when voiding
   createdById        String
   createdBy          User                @relation(fields: [createdById], references: [id])
   createdAt          DateTime            @default(now())
@@ -369,6 +373,9 @@ model Payment {
   receivedById    String
   receivedBy      User                @relation(fields: [receivedById], references: [id])
   paymentDate     DateTime            @default(now())
+  // ─── Edit/Void tracking ────────────────────────────────────────────────────
+  voidedAt        DateTime?           // Set when voided; null = active
+  voidReason      String?             // Reason provided by admin when voiding
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
   ledgers         CreditLedger[]
