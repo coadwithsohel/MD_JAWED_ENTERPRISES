@@ -1,75 +1,80 @@
+import { Prisma } from "@prisma/client";
+
 /**
- * Decimal-safe money utilities.
- * All monetary values are handled in integer paise (1 rupee = 100 paise)
- * to avoid JavaScript floating-point precision errors.
+ * PHASE 3 — CANONICAL MONEY UNIT UTILITIES
+ * Stores and calculates all financial values directly in Rupees using Prisma.Decimal.
+ * 12500.00 means ₹12,500
+ * 600.00 means ₹600
+ * 2400.00 means ₹2,400
  */
 
-/** Convert any Decimal / string / number to integer paise. */
-export function toPaise(value: unknown): number {
-  if (value == null) return 0;
-  const f = parseFloat(String(value));
-  if (!isFinite(f)) return 0;
-  return Math.round(f * 100);
+/**
+ * Parses raw input string/number into a canonical Prisma.Decimal rupee amount.
+ * Throws an error on non-finite or invalid monetary values.
+ */
+export function parseRupeeAmount(raw: unknown): Prisma.Decimal {
+  if (raw === null || raw === undefined || raw === "") {
+    throw new Error("INVALID_MONEY_VALUE");
+  }
+
+  const cleaned = String(raw)
+    .replace(/,/g, "")
+    .replace(/[₹\s]/g, "");
+
+  const value = Number(cleaned);
+
+  if (!Number.isFinite(value)) {
+    throw new Error("INVALID_MONEY_VALUE");
+  }
+
+  return new Prisma.Decimal(value);
 }
 
-/** Format integer paise as ₹1,23,456.00 (Indian locale). */
-export function fromPaise(paise: number): string {
-  const rupees = Math.abs(paise) / 100;
+/**
+ * Parse a raw rupee value to Javascript number safely.
+ */
+export function parseRupeeNumber(raw: unknown): number {
+  if (raw === null || raw === undefined || raw === "") return 0;
+  const cleaned = String(raw)
+    .replace(/,/g, "")
+    .replace(/[₹\s]/g, "");
+
+  const val = Number(cleaned);
+  return Number.isFinite(val) ? val : 0;
+}
+
+/**
+ * Formats rupee amount as ₹X,XX,XXX.XX (Indian locale).
+ */
+export function formatINR(value: unknown): string {
+  const num = parseRupeeNumber(value);
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(rupees);
+  }).format(num);
 }
 
-/** Format a raw rupee number / string as ₹X,XX,XXX.XX */
-export function formatINR(value: unknown): string {
-  return fromPaise(toPaise(value));
-}
+/** Alias for formatINR */
+export const formatRupee = formatINR;
 
 export function parseSignedAmount(value: unknown): number {
-  const raw = String(value ?? "").trim();
-  if (!raw) return 0;
-
-  const normalized = raw.replace(/[₹,]/g, "").trim();
-  if (!/^-?\d+(\.\d+)?$/.test(normalized)) {
-    throw new Error("Invalid amount");
-  }
-
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed)) {
-    throw new Error("Invalid amount");
-  }
-
-  return parsed;
+  return parseRupeeNumber(value);
 }
 
-/**
- * Parse a monetary string safely.
- * Returns null if the value is invalid (NaN, Infinity, negative-disallowed, too large).
- */
 export function parseSafeDecimal(
   raw: string,
   options: { allowNegative?: boolean; maxValue?: number } = {},
 ): number | null {
   const { allowNegative = false, maxValue = 9_99_99_999.99 } = options;
-
-  const trimmed = raw.trim().replace(/,/g, "");
-  if (trimmed === "" || trimmed === "-") return null;
-
-  const val = parseFloat(trimmed);
-  if (!isFinite(val) || isNaN(val)) return null;
+  if (!raw || raw.trim() === "" || raw.trim() === "-") return null;
+  const val = parseRupeeNumber(raw);
   if (!allowNegative && val < 0) return null;
   if (val > maxValue) return null;
-
   return val;
 }
 
-/**
- * Determine credit status based on limit and outstanding.
- * Returns one of: 'no_limit' | 'available' | 'near_limit' | 'limit_reached' | 'limit_exceeded'
- */
 export type CreditStatus =
   | "no_limit"
   | "available"
@@ -78,13 +83,13 @@ export type CreditStatus =
   | "limit_exceeded";
 
 export function getCreditStatus(
-  creditLimitPaise: number,
-  outstandingPaise: number,
+  creditLimit: number,
+  outstanding: number,
 ): CreditStatus {
-  if (creditLimitPaise <= 0) return "no_limit";
-  if (outstandingPaise > creditLimitPaise) return "limit_exceeded";
-  if (outstandingPaise === creditLimitPaise) return "limit_reached";
-  const usagePct = (outstandingPaise / creditLimitPaise) * 100;
+  if (creditLimit <= 0) return "no_limit";
+  if (outstanding > creditLimit) return "limit_exceeded";
+  if (outstanding === creditLimit) return "limit_reached";
+  const usagePct = (outstanding / creditLimit) * 100;
   if (usagePct >= 80) return "near_limit";
   return "available";
 }
