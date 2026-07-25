@@ -30,7 +30,7 @@ const EditCustomerSchema = z.object({
   openingBalance: z.number().optional(),
   isActive: z.boolean().optional(),
   // Required for all edits
-  editReason: z.string().min(3, 'Edit reason is required').max(500),
+  editReason: z.string().trim().optional().nullable(),
   // Optimistic concurrency token (ISO string from customer.updatedAt)
   updatedAt: z.string(),
 });
@@ -88,7 +88,8 @@ export async function PATCH(
       );
     }
 
-    const { editReason, updatedAt: clientUpdatedAt, openingBalance: newOpeningBalance, creditLimit: newCreditLimit, ...profileFields } = parsed.data;
+    const { editReason: rawReason, updatedAt: clientUpdatedAt, openingBalance: newOpeningBalance, creditLimit: newCreditLimit, ...profileFields } = parsed.data;
+    const editReason = rawReason || null;
 
     // 1. Load existing canonical record
     const existing = await prisma.customer.findUnique({ where: { id } });
@@ -165,7 +166,7 @@ export async function PATCH(
             isActive: existing.isActive,
           } as object,
           newData: {
-            ...updateData,
+            ...profileFields,
             editReason,
             editedBy: auth.userId,
           } as object,

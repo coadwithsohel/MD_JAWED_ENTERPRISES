@@ -26,7 +26,6 @@ export default function VoidConfirmModal({ target, onSuccess, onClose }: VoidCon
 
   async function handleVoid(e: React.FormEvent) {
     e.preventDefault();
-    if (!voidReason.trim()) { setError('Void reason is required'); return; }
     setSaving(true);
     setError('');
 
@@ -117,14 +116,13 @@ export default function VoidConfirmModal({ target, onSuccess, onClose }: VoidCon
         {/* Form */}
         <form onSubmit={handleVoid} className="p-5 pt-4">
           <label className="block text-xs font-medium text-slate-700 mb-1.5" htmlFor="void-reason">
-            Void Reason * <span className="text-slate-400 font-normal">(required for audit log)</span>
+            Void Reason <span className="text-slate-400 font-normal">(optional)</span>
           </label>
           <textarea
             id="void-reason"
             value={voidReason}
             onChange={(e) => setVoidReason(e.target.value)}
             rows={2}
-            required
             placeholder="e.g. Entered in wrong account, Tally mismatch..."
             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 outline-none resize-none"
           />

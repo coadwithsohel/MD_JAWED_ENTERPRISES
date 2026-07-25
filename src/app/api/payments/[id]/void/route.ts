@@ -13,7 +13,7 @@ import { requireRole } from '@/lib/auth';
 import { Decimal } from '@prisma/client/runtime/library';
 
 const VoidPaymentSchema = z.object({
-  voidReason: z.string().min(3, 'Void reason is required').max(500),
+  voidReason: z.string().trim().optional().nullable(),
   updatedAt: z.string(),
   customerId: z.string(),
 });
@@ -64,7 +64,8 @@ export async function POST(
       return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 422 });
     }
 
-    const { voidReason, updatedAt: clientUpdatedAt, customerId } = parsed.data;
+    const { voidReason: rawReason, updatedAt: clientUpdatedAt, customerId } = parsed.data;
+    const voidReason = rawReason || null;
 
     const existing = await prisma.payment.findUnique({
       where: { id: paymentId },

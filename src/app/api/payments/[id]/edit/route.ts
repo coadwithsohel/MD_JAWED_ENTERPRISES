@@ -22,7 +22,7 @@ const EditPaymentSchema = z.object({
   notes: z.string().optional().nullable(),
   amount: z.number().positive('Amount must be positive').optional(),
   // Required
-  editReason: z.string().min(3, 'Edit reason is required').max(500),
+  editReason: z.string().trim().optional().nullable(),
   // Optimistic concurrency
   updatedAt: z.string(),
   // Customer context for ownership verification
@@ -88,10 +88,12 @@ export async function PATCH(
       referenceNumber: newReferenceNumber,
       notes: newNotes,
       amount: newAmount,
-      editReason,
+      editReason: rawReason,
       updatedAt: clientUpdatedAt,
       customerId,
     } = parsed.data;
+
+    const editReason = rawReason || null;
 
     // 1. Load existing canonical record
     const existing = await prisma.payment.findUnique({

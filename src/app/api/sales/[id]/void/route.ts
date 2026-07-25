@@ -13,7 +13,7 @@ import { requireRole } from '@/lib/auth';
 import { Decimal } from '@prisma/client/runtime/library';
 
 const VoidSaleSchema = z.object({
-  voidReason: z.string().min(3, 'Void reason is required').max(500),
+  voidReason: z.string().trim().optional().nullable(),
   updatedAt: z.string(), // optimistic concurrency token
   customerId: z.string(),
 });
@@ -64,7 +64,8 @@ export async function POST(
       return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 422 });
     }
 
-    const { voidReason, updatedAt: clientUpdatedAt, customerId } = parsed.data;
+    const { voidReason: rawReason, updatedAt: clientUpdatedAt, customerId } = parsed.data;
+    const voidReason = rawReason || null;
 
     // Load canonical record
     const existing = await prisma.sale.findUnique({ where: { id: saleId } });

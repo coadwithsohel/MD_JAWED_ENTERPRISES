@@ -84,7 +84,6 @@ export default function EditCustomerModal({ customer, onSuccess, onClose }: Edit
     setFormError('');
     if (!fullName.trim()) { setFormError('Name is required'); return; }
     if (!mobile.trim()) { setFormError('Mobile is required'); return; }
-    if (!editReason.trim()) { setFormError('Edit reason is required'); return; }
     if (!hasChanges) { setFormError('No changes detected'); return; }
     setStage('confirm');
   }
@@ -215,8 +214,8 @@ export default function EditCustomerModal({ customer, onSuccess, onClose }: Edit
             </div>
 
             <div className="pt-2 border-t border-slate-100">
-              <label className="block text-xs font-medium text-slate-700 mb-1" htmlFor="ec-reason">Edit Reason * <span className="text-slate-400 font-normal">(required for audit log)</span></label>
-              <input id="ec-reason" value={editReason} onChange={(e) => setEditReason(e.target.value)} required
+              <label className="block text-xs font-medium text-slate-700 mb-1" htmlFor="ec-reason">Edit Reason <span className="text-slate-400 font-normal">(optional)</span></label>
+              <input id="ec-reason" value={editReason} onChange={(e) => setEditReason(e.target.value)}
                 placeholder="e.g. Corrected mobile number, Updated address..."
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
             </div>
@@ -239,7 +238,7 @@ export default function EditCustomerModal({ customer, onSuccess, onClose }: Edit
               {!hasChanges && <p className="text-sm text-slate-400">No changes detected.</p>}
             </div>
             <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
-              <span className="font-semibold">Reason: </span>{editReason}
+              <span className="font-semibold">Reason: </span>{editReason || <span className="text-amber-600/70 italic">None provided</span>}
             </div>
             <div className="flex justify-end gap-3 mt-4">
               <button onClick={() => setStage('form')} className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">Back</button>

@@ -22,7 +22,7 @@ const EditSaleSchema = z.object({
   dueDate: z.string().optional().nullable(),
   debitAmount: z.number().positive('Amount must be positive').optional(),
   // Required
-  editReason: z.string().min(3, 'Edit reason is required').max(500),
+  editReason: z.string().trim().optional().nullable(),
   // Optimistic concurrency — ISO string from sale.updatedAt
   updatedAt: z.string(),
   // Customer context for ownership verification
@@ -87,10 +87,12 @@ export async function PATCH(
       notes: newNotes,
       dueDate: newDueDate,
       debitAmount: newDebitAmount,
-      editReason,
+      editReason: rawReason,
       updatedAt: clientUpdatedAt,
       customerId,
     } = parsed.data;
+
+    const editReason = rawReason || null;
 
     // 1. Load existing canonical record
     const existing = await prisma.sale.findUnique({

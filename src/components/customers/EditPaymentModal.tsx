@@ -138,7 +138,6 @@ export default function EditPaymentModal({ paymentId, customerId, onSuccess, onC
     e.preventDefault();
     setFormError('');
     if (!amount || Number(amount) <= 0) { setFormError('Amount must be positive'); return; }
-    if (!editReason.trim()) { setFormError('Edit reason is required'); return; }
     if (!hasChanges) { setFormError('No changes detected'); return; }
     setStage('confirm');
   }
@@ -244,8 +243,8 @@ export default function EditPaymentModal({ paymentId, customerId, onSuccess, onC
               </div>
             </div>
             <div className="pt-2 border-t border-slate-100">
-              <label className="block text-xs font-medium text-slate-700 mb-1" htmlFor="ep-reason">Edit Reason * <span className="text-slate-400 font-normal">(required for audit)</span></label>
-              <input id="ep-reason" value={editReason} onChange={(e) => setEditReason(e.target.value)} required placeholder="e.g. Corrected payment date..."
+              <label className="block text-xs font-medium text-slate-700 mb-1" htmlFor="ep-reason">Edit Reason <span className="text-slate-400 font-normal">(optional)</span></label>
+              <input id="ep-reason" value={editReason} onChange={(e) => setEditReason(e.target.value)} placeholder="e.g. Corrected payment date..."
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none" />
             </div>
             <div className="flex justify-end gap-3 pt-2 border-t border-slate-100">
@@ -264,7 +263,7 @@ export default function EditPaymentModal({ paymentId, customerId, onSuccess, onC
               ))}
             </div>
             <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-800">
-              <span className="font-semibold">Reason: </span>{editReason}
+              <span className="font-semibold">Reason: </span>{editReason || <span className="text-amber-600/70 italic">None provided</span>}
             </div>
             <div className="flex justify-end gap-3 mt-4">
               <button onClick={() => setStage('form')} className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">Back</button>
