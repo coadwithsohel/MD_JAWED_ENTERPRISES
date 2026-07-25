@@ -9,6 +9,7 @@
  * - Reports financial totals: opening balance, debit, credit, positive balances, overdue, recent payments
  */
 import { PrismaClient } from "@prisma/client";
+import { Decimal } from "@prisma/client/runtime/library";
 import fs from "fs";
 import path from "path";
 
@@ -205,18 +206,12 @@ async function runAudit() {
   `;
   const positiveBalanceTotal = Number(posBalanceRes[0]?.sum ?? 0);
 
-  // Overdue Totals
-  const now = new Date();
-  const overdueSalesAgg = await prisma.sale.aggregate({
-    where: {
-      status: { in: ["COMPLETED", "PARTIALLY_RETURNED"] },
-      pendingAmount: { gt: 0 },
-      dueDate: { lt: now },
-      customer: { isActive: true, deletedAt: null }
-    },
-    _sum: { pendingAmount: true }
-  });
-  const totalOverdue = Number(overdueSalesAgg._sum.pendingAmount ?? 0);
+  // Overdue Totals via 15-day FIFO Rule
+  const { getOverdueData } = await import("../src/lib/overdue");
+  const overdueData = await getOverdueData({ limit: 10000 });
+  const totalOverdue = Number(overdueData.summary.totalOverdueAmount);
+  const overdueCustomersCount = overdueData.summary.overdueCustomers;
+  const overdueInvoicesCount = overdueData.summary.overdueInvoices;
 
   // Recent Payments (Last 30 days up to 25 July 2026)
   const endDate = new Date("2026-07-25T23:59:59.999Z");
@@ -242,7 +237,7 @@ async function runAudit() {
   console.log(`Sale Model GrandTotal: ₹${totalSaleGrandTotal.toLocaleString("en-IN")}`);
   console.log(`Payment Model Amount: ₹${totalPaymentAmount.toLocaleString("en-IN")}`);
   console.log(`Positive Balance Total (Outstanding): ₹${positiveBalanceTotal.toLocaleString("en-IN")}`);
-  console.log(`Overdue Total: ₹${totalOverdue.toLocaleString("en-IN")}`);
+  console.log(`Overdue Total: ₹${totalOverdue.toLocaleString("en-IN")} (${overdueCustomersCount} customers, ${overdueInvoicesCount} invoices)`);
   console.log(`Recent Payments (Last 30 Days): ₹${recentPaymentsAmount.toLocaleString("en-IN")} (${recentPaymentsCount} payments)`);
 
   console.log("\n==================================================");

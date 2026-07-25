@@ -43,7 +43,7 @@ import ChangeCreditLimitDialog from '@/components/customers/ChangeCreditLimitDia
 import DeactivateDialog from '@/components/customers/DeactivateDialog';
 import RestoreDialog from '@/components/customers/RestoreDialog';
 import PermanentDeleteDialog from '@/components/customers/PermanentDeleteDialog';
-import { toPaise, fromPaise } from '@/lib/money';
+import { toPaise, fromPaise, formatINR } from '@/lib/money';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -869,7 +869,7 @@ export default function CustomerLedgerPage() {
             ledgerCount: 0,
             reminderCount: 0,
             hasOutstanding: toPaise(cust.currentBalance ?? '0') !== 0,
-            outstandingLabel: fromPaise(Math.abs(toPaise(cust.currentBalance ?? '0'))),
+            outstandingLabel: formatINR(cust.currentBalance ?? '0'),
           }}
           onSuccess={() => {
             setDialog(null);

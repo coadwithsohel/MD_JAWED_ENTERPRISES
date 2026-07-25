@@ -57,7 +57,17 @@ export function formatINR(value: unknown): string {
 }
 
 /** Alias for formatINR */
-export const formatRupee = formatINR;
+/**
+ * Legacy compatibility functions: Now operate directly in canonical Rupee units
+ * to prevent any multi-scaling or division corruption across the system.
+ */
+export function toPaise(raw: unknown): number {
+  return parseRupeeNumber(raw);
+}
+
+export function fromPaise(raw: unknown): number {
+  return parseRupeeNumber(raw);
+}
 
 export function parseSignedAmount(value: unknown): number {
   return parseRupeeNumber(value);

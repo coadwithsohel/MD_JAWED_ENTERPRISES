@@ -13,7 +13,7 @@ import ChangeCreditLimitDialog from '@/components/customers/ChangeCreditLimitDia
 import DeactivateDialog from '@/components/customers/DeactivateDialog';
 import RestoreDialog from '@/components/customers/RestoreDialog';
 import PermanentDeleteDialog from '@/components/customers/PermanentDeleteDialog';
-import { toPaise, fromPaise, getCreditStatus, CREDIT_STATUS_LABELS, CREDIT_STATUS_COLORS } from '@/lib/money';
+import { toPaise, fromPaise, formatINR, getCreditStatus, CREDIT_STATUS_LABELS, CREDIT_STATUS_COLORS } from '@/lib/money';
 
 interface Customer {
   id: string; customerCode: string; fullName: string; mobile: string;
@@ -494,7 +494,7 @@ export default function CustomersPage() {
             ledgerCount: 0,
             reminderCount: 0,
             hasOutstanding: toPaise(selectedCustomer.currentBalance) !== 0,
-            outstandingLabel: fromPaise(Math.abs(toPaise(selectedCustomer.currentBalance))),
+            outstandingLabel: formatINR(selectedCustomer.currentBalance),
           }}
           onSuccess={() => {
             closeDialog();
