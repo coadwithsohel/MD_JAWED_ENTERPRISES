@@ -1750,7 +1750,7 @@ export default function CustomerLedgerPage() {
                                   {isClickable && (
                                     <button
                                       onClick={() => handleNavigate(entry)}
-                                      className="text-slate-300 hover:text-blue-500 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded"
+                                      className="text-slate-700 hover:text-blue-600 dark:text-slate-300 dark:hover:text-white transition-colors opacity-100 visible focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none p-1 rounded"
                                       aria-label={`View ${entry.voucherType === 'SALE' ? 'invoice' : 'payment'} ${entry.voucherNumber}`}
                                     >
                                       <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
