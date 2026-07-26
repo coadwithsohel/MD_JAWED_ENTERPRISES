@@ -69,7 +69,7 @@ export default function TransactionRowMenu({ voucherType, onEdit, onVoid }: Tran
       <button
         ref={triggerRef}
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        className="h-7 w-7 flex items-center justify-center rounded-md text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 transition-all opacity-0 group-hover:opacity-100 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+        className="h-7 w-7 flex items-center justify-center rounded-md text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white hover:bg-slate-100 transition-all opacity-100 visible focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
         aria-label={`Actions for ${label}`}
         aria-haspopup="true"
         aria-expanded={open}
