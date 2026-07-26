@@ -38,6 +38,7 @@ import {
   UserCheck,
   Trash2,
   Loader2,
+  PlusCircle,
 } from 'lucide-react';
 import CreditAccountSection from '@/components/customers/CreditAccountSection';
 import ChangeCreditLimitDialog from '@/components/customers/ChangeCreditLimitDialog';
@@ -49,6 +50,9 @@ import EditCustomerModal from '@/components/customers/EditCustomerModal';
 import EditSaleModal from '@/components/customers/EditSaleModal';
 import EditPaymentModal from '@/components/customers/EditPaymentModal';
 import VoidConfirmModal from '@/components/customers/VoidConfirmModal';
+import ManualEntryModal from '@/components/customers/ManualEntryModal';
+import EditInvoiceModal from '@/components/invoices/EditInvoiceModal';
+import VoidInvoiceModal from '@/components/invoices/VoidInvoiceModal';
 import { toPaise, fromPaise, formatINR } from '@/lib/money';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -75,7 +79,7 @@ interface LedgerEntry {
   sourceId: string;
   status: string;
   // ─── Edit metadata (added by ledger API) ──────────────────────────────────────
-  sourceModel?: 'Sale' | 'Payment' | 'Customer' | null;
+  sourceModel?: 'Sale' | 'Payment' | 'Customer' | 'CreditLedger' | null;
   canonicalId?: string;
   editable?: boolean;
   recordUpdatedAt?: string | null;
@@ -880,6 +884,12 @@ export default function CustomerLedgerPage() {
   const [editPaymentId, setEditPaymentId] = useState<string | null>(null);
   const [voidTarget, setVoidTarget] = useState<VoidTarget | null>(null);
 
+  // Manual entry & full invoice modal state
+  const [showManualEntryModal, setShowManualEntryModal] = useState(false);
+  const [editingAdjustment, setEditingAdjustment] = useState<any | null>(null);
+  const [editingInvoiceData, setEditingInvoiceData] = useState<any | null>(null);
+  const [voidingInvoiceData, setVoidingInvoiceData] = useState<any | null>(null);
+
   /** Open Edit Customer modal — builds CustomerEditData from current ledger data */
   function openEditCustomer() {
     const cust = data?.customer;
@@ -1438,6 +1448,13 @@ export default function CustomerLedgerPage() {
                             <CreditCard className="h-3.5 w-3.5" aria-hidden="true" />
                             <span className="hidden sm:inline">Record </span>Payment
                           </button>
+                          <button
+                            onClick={() => { setEditingAdjustment(null); setShowManualEntryModal(true); }}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-sm min-h-[36px]"
+                          >
+                            <PlusCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                            Add Manual Entry
+                          </button>
                         </>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-amber-100 text-amber-700 border border-amber-200 min-h-[36px]">
@@ -1728,6 +1745,74 @@ export default function CustomerLedgerPage() {
                                   {entry.balanceLabel === 'Settled' ? '₹0.00' : entry.runningBalance}
                                 </span>
                                 {' '}
+                                {entry.editable && (entry.sourceModel === 'Sale' || entry.sourceModel === 'Payment' || entry.sourceModel === 'CreditLedger') && (userInfo?.role === 'OWNER' || userInfo?.role === 'MANAGER') && (
+                                     <TransactionRowMenu
+                                       voucherType={
+                                         entry.sourceModel === 'Sale' || entry.voucherType === 'SALE'
+                                           ? 'SALE'
+                                           : entry.sourceModel === 'Payment' || entry.voucherType === 'PAYMENT'
+                                             ? 'PAYMENT'
+                                             : 'ADJUSTMENT'
+                                       }
+                                       onEdit={() => {
+                                         if (entry.sourceModel === 'Sale' && entry.canonicalId) {
+                                           fetch(`/api/invoices/${entry.canonicalId}`)
+                                             .then((r) => r.json())
+                                             .then((d) => {
+                                               if (d.sale || d.invoice) setEditingInvoiceData(d.sale ?? d.invoice);
+                                               else openEditSale(entry);
+                                             })
+                                             .catch(() => openEditSale(entry));
+                                         } else if (entry.sourceModel === 'Payment' && entry.canonicalId) {
+                                           openEditPayment(entry);
+                                         } else if (entry.sourceModel === 'CreditLedger' || entry.canonicalId) {
+                                           setEditingAdjustment({
+                                             id: entry.canonicalId ?? entry.id,
+                                             entryType: entry.debit ? 'DEBIT' : 'CREDIT',
+                                             amount: parseFloat((entry.debit || entry.credit).replace(/[₹,\s]/g, '')),
+                                             transactionDate: entry.date,
+                                             particulars: entry.particulars,
+                                             recordUpdatedAt: entry.recordUpdatedAt,
+                                           });
+                                           setShowManualEntryModal(true);
+                                         }
+                                       }}
+                                       onVoid={() => {
+                                         if (entry.sourceModel === 'Sale' && entry.canonicalId) {
+                                           setVoidingInvoiceData({
+                                             id: entry.canonicalId,
+                                             invoiceNumber: entry.voucherNumber || entry.particulars,
+                                             grandTotal: entry.debit || entry.credit || '0',
+                                             updatedAt: entry.recordUpdatedAt || new Date().toISOString(),
+                                             customerName: cust?.fullName,
+                                           });
+                                         } else if (entry.sourceModel === 'CreditLedger' && entry.canonicalId) {
+                                           if (confirm(`Void manual entry '${entry.particulars}'? This will reverse its balance impact.`)) {
+                                             fetch(`/api/adjustments/${entry.canonicalId}/void`, {
+                                               method: 'POST',
+                                               headers: { 'Content-Type': 'application/json' },
+                                               body: JSON.stringify({
+                                                 customerId: cust.id,
+                                                 updatedAt: entry.recordUpdatedAt || new Date().toISOString(),
+                                               }),
+                                             })
+                                               .then((r) => r.json())
+                                               .then((res) => {
+                                                 if (res.error) showToast(res.error, 'error');
+                                                 else {
+                                                   showToast('Adjustment entry voided successfully.');
+                                                   fetchLedger();
+                                                 }
+                                               })
+                                               .catch(() => showToast('Failed to void adjustment entry', 'error'));
+                                           }
+                                         } else {
+                                           openVoid(entry);
+                                         }
+                                       }}
+                                     />
+                                   )}
+                                {' '}
                                 <span
                                   className={`text-xs font-bold px-1 py-0.5 rounded ${
                                     entry.balanceLabel === 'Cr'
@@ -1862,6 +1947,55 @@ export default function CustomerLedgerPage() {
                 {error}
                 <button onClick={fetchLedger} className="ml-auto underline hover:no-underline shrink-0">Retry</button>
               </div>
+            )}
+            {/* ─── Manual Entry & Invoice Modals ───────────────────────── */}
+            {cust && (
+              <ManualEntryModal
+                isOpen={showManualEntryModal}
+                onClose={() => {
+                  setShowManualEntryModal(false);
+                  setEditingAdjustment(null);
+                }}
+                onSuccess={() => {
+                  showToast(
+                    editingAdjustment
+                      ? "Adjustment updated successfully"
+                      : "Manual adjustment entry added successfully"
+                  );
+                  fetchLedger();
+                }}
+                customer={{
+                  id: cust.id,
+                  fullName: cust.fullName,
+                  customerCode: cust.customerCode,
+                  mobile: cust.mobile,
+                }}
+                initialData={editingAdjustment}
+              />
+            )}
+
+            {editingInvoiceData && (
+              <EditInvoiceModal
+                isOpen={!!editingInvoiceData}
+                onClose={() => setEditingInvoiceData(null)}
+                onSuccess={() => {
+                  showToast("Invoice updated successfully");
+                  fetchLedger();
+                }}
+                invoice={editingInvoiceData}
+              />
+            )}
+
+            {voidingInvoiceData && (
+              <VoidInvoiceModal
+                isOpen={!!voidingInvoiceData}
+                onClose={() => setVoidingInvoiceData(null)}
+                onSuccess={() => {
+                  showToast("Invoice voided successfully");
+                  fetchLedger();
+                }}
+                invoice={voidingInvoiceData}
+              />
             )}
           </>
         )}

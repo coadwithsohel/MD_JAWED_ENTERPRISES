@@ -1,18 +1,21 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Search, Loader2, FileText, X, MessageCircle } from "lucide-react";
+import { Search, Loader2, FileText, X, MessageCircle, Pencil, Ban } from "lucide-react";
 import Link from "next/link";
 import {
   buildInvoiceShareContext,
   sendInvoicePdfOnWhatsApp,
   type InvoicePdfUiState,
 } from "@/lib/invoice-pdf-client";
+import EditInvoiceModal from "@/components/invoices/EditInvoiceModal";
+import VoidInvoiceModal from "@/components/invoices/VoidInvoiceModal";
 
 interface Sale {
   id: string;
   invoiceNumber: string;
   createdAt: string;
+  updatedAt?: string;
   customer: { fullName: string; mobile: string; customerCode: string } | null;
   createdBy: { fullName: string } | null;
   subtotal: string;
@@ -36,6 +39,9 @@ export default function InvoicesPage() {
   const [whatsappSaleId, setWhatsappSaleId] = useState<string | null>(null);
   const [whatsappState, setWhatsappState] = useState<InvoicePdfUiState>("idle");
   const [whatsappMessage, setWhatsappMessage] = useState<string | null>(null);
+  const [editingInvoiceData, setEditingInvoiceData] = useState<any | null>(null);
+  const [voidingInvoiceData, setVoidingInvoiceData] = useState<any | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const LIMIT = 20;
 
   useEffect(() => {
@@ -82,7 +88,7 @@ export default function InvoicesPage() {
       alive = false;
       controller.abort();
     };
-  }, [page, debouncedSearch]);
+  }, [page, debouncedSearch, refreshKey]);
 
   const fmt = (n: string | number) =>
     new Intl.NumberFormat("en-IN", {
@@ -307,10 +313,43 @@ export default function InvoicesPage() {
                           ) : null}
                           <Link
                             href={`/dashboard/invoices/${s.id}`}
-                            className="text-xs text-blue-600 hover:underline font-medium"
+                            className="text-xs text-blue-600 hover:underline font-medium px-2 py-1 rounded hover:bg-blue-50"
                           >
                             View
                           </Link>
+                          {s.status !== 'CANCELLED' && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  fetch(`/api/invoices/${s.id}`)
+                                    .then((r) => r.json())
+                                    .then((d) => setEditingInvoiceData(d.sale ?? d.invoice ?? s))
+                                    .catch(() => setEditingInvoiceData(s));
+                                }}
+                                className="inline-flex items-center gap-1 text-xs text-slate-700 hover:text-blue-700 px-2 py-1 rounded hover:bg-blue-50 font-medium"
+                                title="Edit Invoice"
+                              >
+                                <Pencil className="h-3.5 w-3.5 text-blue-500" />
+                                Edit
+                              </button>
+                              <button
+                                onClick={() =>
+                                  setVoidingInvoiceData({
+                                    id: s.id,
+                                    invoiceNumber: s.invoiceNumber,
+                                    grandTotal: s.grandTotal,
+                                    updatedAt: s.updatedAt || new Date().toISOString(),
+                                    customerName: s.customer?.fullName,
+                                  })
+                                }
+                                className="inline-flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900 px-2 py-1 rounded hover:bg-amber-50 font-medium"
+                                title="Void Invoice"
+                              >
+                                <Ban className="h-3.5 w-3.5 text-amber-500" />
+                                Void
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -342,6 +381,30 @@ export default function InvoicesPage() {
             Next
           </button>
         </div>
+      )}
+
+      {editingInvoiceData && (
+        <EditInvoiceModal
+          isOpen={!!editingInvoiceData}
+          onClose={() => setEditingInvoiceData(null)}
+          onSuccess={() => {
+            setEditingInvoiceData(null);
+            setRefreshKey((k) => k + 1);
+          }}
+          invoice={editingInvoiceData}
+        />
+      )}
+
+      {voidingInvoiceData && (
+        <VoidInvoiceModal
+          isOpen={!!voidingInvoiceData}
+          onClose={() => setVoidingInvoiceData(null)}
+          onSuccess={() => {
+            setVoidingInvoiceData(null);
+            setRefreshKey((k) => k + 1);
+          }}
+          invoice={voidingInvoiceData}
+        />
       )}
     </div>
   );

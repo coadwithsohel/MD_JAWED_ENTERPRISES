@@ -26,7 +26,7 @@ interface LedgerEntry {
   sourceId: string;
   status: string;
   // ─── Edit metadata ───────────────────────────────────────────────────────
-  sourceModel: 'Sale' | 'Payment' | 'Customer' | null; // canonical record model
+  sourceModel: 'Sale' | 'Payment' | 'Customer' | 'CreditLedger' | null; // canonical record model
   canonicalId: string;    // ID of the canonical record to PATCH
   editable: boolean;       // true if admin can edit/void this row
   recordUpdatedAt: string | null; // sale.updatedAt or payment.updatedAt — for optimistic concurrency
@@ -293,22 +293,26 @@ export async function GET(
     status: string;
     sortKey: string; // for stable sort: ISO + id
     // edit metadata
-    sourceModel: 'Sale' | 'Payment' | 'Customer' | null;
+    sourceModel: 'Sale' | 'Payment' | 'Customer' | 'CreditLedger' | null;
     canonicalId: string;
     editable: boolean;
     recordUpdatedAt: string | null;
+    direction?: string | null;
   }> = [];
 
   // From CreditLedger records (OPENING_BALANCE rows already excluded above)
   for (const r of ledgerRecords) {
     const vType2 = mapLedgerType(r.transactionType);
-    const isDebit = ["SALE", "DEBIT_NOTE"].includes(vType2);
+    const isDebit =
+      r.direction === "DEBIT" ||
+      ["CREDIT_SALE", "PAYMENT_REVERSAL", "MANUAL_DEBIT"].includes(r.transactionType) ||
+      (r.transactionType === "ADJUSTMENT" && r.direction !== "CREDIT");
     const amtPaise = toPaise(r.amount);
 
     let particulars = r.description ?? vType2.replace(/_/g, " ");
-    let voucherNumber = "";
+    let voucherNumber = r.referenceNumber ?? "";
     let sourceId = r.id;
-    let status = "Completed";
+    let status = r.status === "VOIDED" ? "Voided" : "Completed";
 
     // Use canonical accounting date:
     //   Payment → payment.paymentDate (user-selected date)
@@ -348,7 +352,7 @@ export async function GET(
     }
 
     // Determine edit metadata
-    let entrySourceModel: 'Sale' | 'Payment' | 'Customer' | null = null;
+    let entrySourceModel: 'Sale' | 'Payment' | 'Customer' | 'CreditLedger' | null = null;
     let entryCanonicalId = r.id; // fallback to CreditLedger id
     let entryEditable = false;
     let entryRecordUpdatedAt: string | null = null;
@@ -356,8 +360,6 @@ export async function GET(
     if (r.sale) {
       entrySourceModel = 'Sale';
       entryCanonicalId = r.sale.id;
-      // Only editable if not voided (sale.status != CANCELLED due to void)
-      // We check this by whether the sale has a paymentStatus (active sales always have it)
       entryEditable = r.sale.status !== 'CANCELLED';
       entryRecordUpdatedAt = r.sale.updatedAt ? new Date(r.sale.updatedAt).toISOString() : null;
     } else if (r.payment) {
@@ -365,6 +367,12 @@ export async function GET(
       entryCanonicalId = r.payment.id;
       entryEditable = r.payment.status !== 'VOIDED' && r.payment.status !== 'REVERSED';
       entryRecordUpdatedAt = r.payment.updatedAt ? new Date(r.payment.updatedAt).toISOString() : null;
+    } else {
+      // Standalone CreditLedger adjustment (MANUAL_DEBIT / MANUAL_CREDIT / ADJUSTMENT)
+      entrySourceModel = 'CreditLedger';
+      entryCanonicalId = r.id;
+      entryEditable = r.status !== 'VOIDED';
+      entryRecordUpdatedAt = r.updatedAt ? new Date(r.updatedAt).toISOString() : null;
     }
 
     rawEntries.push({

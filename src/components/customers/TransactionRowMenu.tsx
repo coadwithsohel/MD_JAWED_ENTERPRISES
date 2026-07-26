@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { MoreVertical, Pencil, Ban } from 'lucide-react';
 
 interface TransactionRowMenuProps {
-  voucherType: 'SALE' | 'PAYMENT';
+  voucherType: 'SALE' | 'PAYMENT' | 'ADJUSTMENT' | 'DEBIT_NOTE' | 'CREDIT_NOTE';
   onEdit: () => void;
   onVoid: () => void;
 }
@@ -13,6 +13,7 @@ interface TransactionRowMenuProps {
  * Collision-aware three-dot action menu for individual ledger rows.
  * Shows "Edit Sale / Void Sale" for SALE rows.
  * Shows "Edit Payment / Void Payment" for PAYMENT rows.
+ * Shows "Edit Entry / Void Entry" for ADJUSTMENT rows.
  */
 export default function TransactionRowMenu({ voucherType, onEdit, onVoid }: TransactionRowMenuProps) {
   const [open, setOpen] = useState(false);
@@ -62,7 +63,12 @@ export default function TransactionRowMenu({ voucherType, onEdit, onVoid }: Tran
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const label = voucherType === 'SALE' ? 'Sale' : 'Payment';
+  const label =
+    voucherType === 'SALE'
+      ? 'Invoice'
+      : voucherType === 'PAYMENT'
+        ? 'Payment'
+        : 'Entry';
 
   return (
     <div className="relative inline-flex shrink-0">
@@ -96,7 +102,7 @@ export default function TransactionRowMenu({ voucherType, onEdit, onVoid }: Tran
           <div className="my-0.5 border-t border-slate-100" role="separator" />
           <button
             onClick={() => { setOpen(false); onVoid(); }}
-            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-amber-700 hover:bg-amber-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 focus-visible:outline-none"
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-amber-700 hover:bg-amber-50 transition-colors text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 focus-visible:outline-none font-medium"
             role="menuitem"
           >
             <Ban className="h-3.5 w-3.5 text-amber-500 shrink-0" aria-hidden="true" />

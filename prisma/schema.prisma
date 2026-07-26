@@ -59,6 +59,8 @@ enum LedgerTransactionType {
   SALE_CANCELLED
   RETURN_CREDIT
   ADJUSTMENT
+  MANUAL_DEBIT
+  MANUAL_CREDIT
 }
 
 enum InventoryMovementType {
@@ -143,6 +145,7 @@ model User {
   auditLogs     AuditLog[]
   importBatches CustomerImportBatch[]
   tallyImportBatches TallyImportBatch[]
+  creditLedgers CreditLedger[]
 }
 
 model ShopSettings {
@@ -397,10 +400,24 @@ model CreditLedger {
   amount          Decimal               @db.Decimal(14, 2)
   balanceAfter    Decimal               @db.Decimal(14, 2)
   description     String?
+  direction       String?               // "DEBIT" | "CREDIT"
+  referenceNumber String?
+  notes           String?
+  reason          String?
+  status          String                @default("COMPLETED") // "COMPLETED" | "VOIDED"
+  voidedAt        DateTime?
+  voidReason      String?
+  idempotencyKey  String?               @unique
+  createdById     String?
+  createdBy       User?                 @relation(fields: [createdById], references: [id])
+  accountingDate  DateTime              @default(now())
   createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @default(now()) @updatedAt
 
   @@index([customerId, createdAt])
   @@index([saleId])
+  @@index([paymentId])
+  @@index([idempotencyKey])
 }
 
 model InventoryMovement {

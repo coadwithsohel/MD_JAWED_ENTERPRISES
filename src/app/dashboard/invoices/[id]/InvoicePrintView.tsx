@@ -13,7 +13,12 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  Pencil,
+  Ban,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import EditInvoiceModal from "@/components/invoices/EditInvoiceModal";
+import VoidInvoiceModal from "@/components/invoices/VoidInvoiceModal";
 import {
   buildInvoiceShareContext,
   downloadInvoicePdf,
@@ -89,12 +94,15 @@ export default function InvoicePrintView({
   sale: Sale;
   settings: Settings | null;
 }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const shouldPrint = searchParams.get("print") === "1";
 
   const [pdfState, setPdfState] = useState<InvoicePdfUiState>("idle");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showVoidModal, setShowVoidModal] = useState(false);
   const actionInFlight = useRef(false);
 
   useEffect(() => {
@@ -272,6 +280,26 @@ export default function InvoicePrintView({
                 Send PDF on WhatsApp
               </button>
             ) : null}
+            {sale.status !== "CANCELLED" && (
+              <>
+                <button
+                  onClick={() => setShowEditModal(true)}
+                  disabled={isBusy}
+                  className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Pencil className="h-4 w-4 text-blue-600" />
+                  Edit Invoice
+                </button>
+                <button
+                  onClick={() => setShowVoidModal(true)}
+                  disabled={isBusy}
+                  className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 shadow-sm transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Ban className="h-4 w-4 text-amber-600" />
+                  Void Invoice
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -578,6 +606,36 @@ export default function InvoicePrintView({
           </div>
         )}
       </div>
+
+      {showEditModal && (
+        <EditInvoiceModal
+          isOpen={showEditModal}
+          onClose={() => setShowEditModal(false)}
+          onSuccess={() => {
+            setShowEditModal(false);
+            router.refresh();
+          }}
+          invoice={sale as any}
+        />
+      )}
+
+      {showVoidModal && (
+        <VoidInvoiceModal
+          isOpen={showVoidModal}
+          onClose={() => setShowVoidModal(false)}
+          onSuccess={() => {
+            setShowVoidModal(false);
+            router.refresh();
+          }}
+          invoice={{
+            id: sale.id,
+            invoiceNumber: sale.invoiceNumber,
+            grandTotal: sale.grandTotal,
+            updatedAt: (sale as any).updatedAt || new Date().toISOString(),
+            customerName: sale.customer?.fullName,
+          }}
+        />
+      )}
     </>
   );
 }

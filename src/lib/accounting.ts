@@ -204,46 +204,57 @@ export async function getCustomerAccountingSummary(
 
   const openingBalance = customer?.openingBalance ?? new Decimal(0);
 
-  // Debit transactions: CREDIT_SALE, PAYMENT_REVERSAL, ADJUSTMENT (amount is positive in CreditLedger for these, they increase the balance)
-  const debitAgg = await prisma.creditLedger.aggregate({
+  // Active ledger entries only (not voided)
+  const ledgerEntries = await prisma.creditLedger.findMany({
     where: {
       customerId,
-      transactionType: { in: ["CREDIT_SALE", "PAYMENT_REVERSAL", "ADJUSTMENT"] },
+      status: { not: "VOIDED" },
+      transactionType: { not: "OPENING_BALANCE" },
     },
-    _sum: { amount: true },
+    select: {
+      transactionType: true,
+      amount: true,
+      direction: true,
+    },
   });
 
-  // Credit transactions: PAYMENT_RECEIVED, SALE_CANCELLED, RETURN_CREDIT (these reduce the balance)
-  const creditAgg = await prisma.creditLedger.aggregate({
-    where: {
-      customerId,
-      transactionType: { in: ["PAYMENT_RECEIVED", "SALE_CANCELLED", "RETURN_CREDIT"] },
-    },
-    _sum: { amount: true },
-  });
+  let totalDebit = new Decimal(0);
+  let totalCredit = new Decimal(0);
+  let sales = new Decimal(0);
+  let receipts = new Decimal(0);
 
-  const totalDebit = (debitAgg._sum?.amount) ?? new Decimal(0);
-  const totalCredit = (creditAgg._sum?.amount) ?? new Decimal(0);
+  for (const entry of ledgerEntries) {
+    const amt = entry.amount ?? new Decimal(0);
+    const type = entry.transactionType;
+
+    if (
+      type === "CREDIT_SALE" ||
+      type === "PAYMENT_REVERSAL" ||
+      type === "MANUAL_DEBIT" ||
+      (type === "ADJUSTMENT" && entry.direction !== "CREDIT")
+    ) {
+      totalDebit = totalDebit.add(amt);
+    } else if (
+      type === "PAYMENT_RECEIVED" ||
+      type === "SALE_CANCELLED" ||
+      type === "RETURN_CREDIT" ||
+      type === "MANUAL_CREDIT" ||
+      (type === "ADJUSTMENT" && entry.direction === "CREDIT")
+    ) {
+      totalCredit = totalCredit.add(amt);
+    }
+
+    if (type === "CREDIT_SALE") {
+      sales = sales.add(amt);
+    }
+    if (type === "PAYMENT_RECEIVED") {
+      receipts = receipts.add(amt);
+    }
+  }
+
   const closingBalance = openingBalance.add(totalDebit).sub(totalCredit);
   const outstanding = Decimal.max(closingBalance, new Decimal(0));
   const advance = Decimal.max(closingBalance.negated(), new Decimal(0));
-
-  // Sales and receipts breakdown
-  const salesAgg = await prisma.creditLedger.aggregate({
-    where: {
-      customerId,
-      transactionType: "CREDIT_SALE",
-    },
-    _sum: { amount: true },
-  });
-
-  const receiptsAgg = await prisma.creditLedger.aggregate({
-    where: {
-      customerId,
-      transactionType: "PAYMENT_RECEIVED",
-    },
-    _sum: { amount: true },
-  });
 
   return {
     customerId,
@@ -253,8 +264,8 @@ export async function getCustomerAccountingSummary(
     closingBalance,
     outstanding,
     advance,
-    sales: salesAgg._sum.amount ?? new Decimal(0),
-    receipts: receiptsAgg._sum.amount ?? new Decimal(0),
+    sales,
+    receipts,
   };
 }
 
@@ -271,16 +282,18 @@ export async function getAllCustomerAccountingSummaries(): Promise<Map<string, C
   const customerIds = customers.map(c => c.id);
   const openingMap = new Map(customers.map(c => [c.id, c.openingBalance ?? new Decimal(0)]));
 
-  // Get all CreditLedger entries for these customers
+  // Get all active CreditLedger entries for these customers
   const ledgerEntries = await prisma.creditLedger.findMany({
     where: {
       customerId: { in: customerIds },
+      status: { not: "VOIDED" },
       transactionType: { not: "OPENING_BALANCE" },
     },
     select: {
       customerId: true,
       transactionType: true,
       amount: true,
+      direction: true,
     },
   });
 
@@ -297,24 +310,29 @@ export async function getAllCustomerAccountingSummaries(): Promise<Map<string, C
     };
 
     const amount = entry.amount ?? new Decimal(0);
+    const type = entry.transactionType;
 
-    switch (entry.transactionType) {
-      case "CREDIT_SALE":
-      case "PAYMENT_REVERSAL":
-      case "ADJUSTMENT":
-        agg.totalDebit = agg.totalDebit.add(amount);
-        break;
-      case "PAYMENT_RECEIVED":
-      case "SALE_CANCELLED":
-      case "RETURN_CREDIT":
-        agg.totalCredit = agg.totalCredit.add(amount);
-        break;
+    if (
+      type === "CREDIT_SALE" ||
+      type === "PAYMENT_REVERSAL" ||
+      type === "MANUAL_DEBIT" ||
+      (type === "ADJUSTMENT" && entry.direction !== "CREDIT")
+    ) {
+      agg.totalDebit = agg.totalDebit.add(amount);
+    } else if (
+      type === "PAYMENT_RECEIVED" ||
+      type === "SALE_CANCELLED" ||
+      type === "RETURN_CREDIT" ||
+      type === "MANUAL_CREDIT" ||
+      (type === "ADJUSTMENT" && entry.direction === "CREDIT")
+    ) {
+      agg.totalCredit = agg.totalCredit.add(amount);
     }
 
-    if (entry.transactionType === "CREDIT_SALE") {
+    if (type === "CREDIT_SALE") {
       agg.sales = agg.sales.add(amount);
     }
-    if (entry.transactionType === "PAYMENT_RECEIVED") {
+    if (type === "PAYMENT_RECEIVED") {
       agg.receipts = agg.receipts.add(amount);
     }
 
