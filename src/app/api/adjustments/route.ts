@@ -22,8 +22,10 @@ export async function POST(req: NextRequest) {
   const { auth, error } = await requireRole(req, ["OWNER", "MANAGER"]);
   if (error) return error;
 
+  let reqIdempotencyKey: string | null = null;
   try {
     const body = await req.json();
+    reqIdempotencyKey = body?.idempotencyKey || req.headers.get("x-idempotency-key") || null;
     const parsed = CreateAdjustmentSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
@@ -93,8 +95,37 @@ export async function POST(req: NextRequest) {
       closingBalance: result.newBalance,
       message: `${entryType === "DEBIT" ? "Debit" : "Credit"} adjustment created successfully`,
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("[POST /api/adjustments]", err);
+    
+    const isConnectionError =
+      err?.code === "P2010" ||
+      err?.code === "P2024" ||
+      err?.code === "P2028" ||
+      err?.message?.includes("57P01") ||
+      err?.message?.includes("terminating connection due to administrator command") ||
+      err?.message?.includes("Connection pool is full");
+
+    if (isConnectionError) {
+      try {
+        if (reqIdempotencyKey) {
+           const existing = await prisma.creditLedger.findUnique({
+             where: { idempotencyKey: reqIdempotencyKey },
+           });
+           if (existing) {
+             return NextResponse.json({
+               adjustment: existing,
+               message: "Transaction already processed (recovered)",
+               duplicate: true,
+             });
+           }
+        }
+      } catch (recoveryErr) {
+        console.error('[POST /api/adjustments] Recovery check failed', recoveryErr);
+      }
+      return NextResponse.json({ error: "Database is temporarily unavailable. Please retry." }, { status: 503 });
+    }
+
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to create manual entry" },
       { status: 500 }

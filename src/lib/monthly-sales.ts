@@ -1,7 +1,5 @@
-﻿import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import { Decimal } from "@prisma/client/runtime/library";
-
-const prisma = new PrismaClient();
 
 export interface DailySale {
   date: string;

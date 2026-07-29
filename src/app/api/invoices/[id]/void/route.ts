@@ -102,9 +102,10 @@ export async function POST(
 
     // Check if already voided
     if (existing.voidedAt != null || existing.status === "CANCELLED") {
+      // If client retries due to a previous 57P01 disconnect during success, it recovers here.
       return NextResponse.json(
-        { error: "This invoice is already voided." },
-        { status: 409 }
+        { message: "This invoice is already voided (recovered)." },
+        { status: 200 }
       );
     }
 
@@ -217,8 +218,21 @@ export async function POST(
       message:
         "Invoice voided successfully. Accounting and stock impact reversed.",
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("[POST /api/invoices/:id/void]", err);
+    
+    const isConnectionError =
+      err?.code === "P2010" ||
+      err?.code === "P2024" ||
+      err?.code === "P2028" ||
+      err?.message?.includes("57P01") ||
+      err?.message?.includes("terminating connection due to administrator command") ||
+      err?.message?.includes("Connection pool is full");
+
+    if (isConnectionError) {
+      return NextResponse.json({ error: "Database is temporarily unavailable. Please retry." }, { status: 503 });
+    }
+
     return NextResponse.json({ error: "Server error voiding invoice", detail: err.message, stack: err.stack }, { status: 500 });
   }
 }

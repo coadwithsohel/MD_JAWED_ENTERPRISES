@@ -30,8 +30,10 @@ export async function POST(req: NextRequest) {
   const { auth, error } = await requireRole(req, ['OWNER', 'MANAGER']);
   if (error) return error;
 
+  let reqIdempotencyKey: string | null = null;
   try {
     const body = await req.json();
+    reqIdempotencyKey = body?.idempotencyKey || null;
     const parsed = BulkEntrySchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json({ success: false, code: 'VALIDATION_ERROR', message: 'Invalid payload' }, { status: 422 });
@@ -146,8 +148,35 @@ export async function POST(req: NextRequest) {
     revalidatePath('/dashboard/bulk-entry/history');
 
     return NextResponse.json({ success: true, message: 'Batch posted successfully', batch: result });
-  } catch (err: unknown) {
+  } catch (err: any) {
     console.error('[POST /api/bulk-entry]', err);
+    
+    // Handle transient connection errors securely
+    const isConnectionError =
+      err?.code === "P2010" ||
+      err?.code === "P2024" ||
+      err?.code === "P2028" ||
+      err?.message?.includes("57P01") ||
+      err?.message?.includes("terminating connection due to administrator command") ||
+      err?.message?.includes("Connection pool is full");
+
+    if (isConnectionError) {
+      // It might have committed before the connection died. Check idempotency again.
+      try {
+        if (reqIdempotencyKey) {
+           const existingBatch = await prisma.bulkEntryBatch.findUnique({
+             where: { idempotencyKey: reqIdempotencyKey },
+           });
+           if (existingBatch) {
+             return NextResponse.json({ success: true, message: 'Already posted (recovered)', batch: existingBatch });
+           }
+        }
+      } catch (recoveryErr) {
+        console.error('[POST /api/bulk-entry] Recovery check failed', recoveryErr);
+      }
+      return NextResponse.json({ success: false, code: 'SERVICE_UNAVAILABLE', message: 'Database is temporarily unavailable. Please retry.' }, { status: 503 });
+    }
+
     const msg = err instanceof Error ? err.message : 'Server error';
     return NextResponse.json({ success: false, code: 'SERVER_ERROR', message: msg }, { status: 422 });
   }

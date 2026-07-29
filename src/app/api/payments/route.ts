@@ -90,8 +90,21 @@ export async function POST(req: NextRequest) {
     revalidatePath(`/dashboard/customers/${customerId}`);
 
     return NextResponse.json(result, { status: 201 });
-  } catch (err: unknown) {
+  } catch (err: any) {
     console.error('[POST /api/payments]', err);
+    
+    const isConnectionError =
+      err?.code === "P2010" ||
+      err?.code === "P2024" ||
+      err?.code === "P2028" ||
+      err?.message?.includes("57P01") ||
+      err?.message?.includes("terminating connection due to administrator command") ||
+      err?.message?.includes("Connection pool is full");
+
+    if (isConnectionError) {
+      return NextResponse.json({ error: "Database is temporarily unavailable. Please retry." }, { status: 503 });
+    }
+
     const msg = err instanceof Error ? err.message : 'Server error';
     const isClientError = ['not found', 'overpayment', 'must be positive'].some((s) => msg.toLowerCase().includes(s));
     return NextResponse.json({ error: msg }, { status: isClientError ? 400 : 500 });
