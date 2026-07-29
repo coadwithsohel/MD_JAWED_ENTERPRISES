@@ -206,8 +206,10 @@ export async function POST(
           } as object,
         },
       });
-
       return voidedSale;
+    }, {
+      maxWait: 5000,
+      timeout: 30000,
     });
 
     return NextResponse.json({
@@ -217,9 +219,6 @@ export async function POST(
     });
   } catch (err) {
     console.error("[POST /api/invoices/:id/void]", err);
-    return NextResponse.json(
-      { error: "Server error voiding invoice" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Server error voiding invoice", detail: err.message, stack: err.stack }, { status: 500 });
   }
 }

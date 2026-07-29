@@ -10,6 +10,7 @@ import {
 } from "@/lib/invoice-pdf-client";
 import EditInvoiceModal from "@/components/invoices/EditInvoiceModal";
 import VoidInvoiceModal from "@/components/invoices/VoidInvoiceModal";
+import MonthlySalesSummary from "@/components/reports/MonthlySalesSummary";
 
 interface Sale {
   id: string;
@@ -161,6 +162,8 @@ export default function InvoicesPage() {
 
   return (
     <div className="space-y-6">
+      <MonthlySalesSummary />
+      
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Sales History</h1>

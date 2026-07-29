@@ -72,10 +72,8 @@ export async function GET(req: NextRequest) {
     where.creditLimit = { gt: 0 };
     where.currentBalance = { gt: 0 };
   } else if (statusFilter === "active" && !creditFilter) {
-    // DEFAULT ACTIVE VIEW: hide cleared customers (balance = 0)
-    // Customers with zero balance are still active but don't need attention in default view.
-    // They remain visible via 'All' tab, direct URL, or 'Cleared' filter.
-    where.currentBalance = { not: 0 };
+    // DEFAULT ACTIVE VIEW: All active customers, including zero balance.
+    // Customers with zero balance remain visible.
   }
 
   // Search
@@ -222,6 +220,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ customer }, { status: 201 });
   } catch (err) {
     console.error("[POST /api/customers]", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    return NextResponse.json({ error: "Server error", detail: err.message, stack: err.stack }, { status: 500 });
   }
 }

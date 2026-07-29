@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import {
@@ -12,13 +12,13 @@ export const dynamic = "force-dynamic";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ invoiceId: string }> },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { error } = await requireAuth(req);
     if (error) return error;
 
-    const { invoiceId } = await params;
+    const { id: invoiceId } = await params;
 
     if (!invoiceId || !isValidInvoiceId(invoiceId)) {
       return NextResponse.json({ error: "Invalid invoice id" }, { status: 400 });
@@ -157,3 +157,5 @@ export async function GET(
     );
   }
 }
+
+

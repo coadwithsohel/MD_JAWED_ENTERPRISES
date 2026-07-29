@@ -5,6 +5,8 @@ import { requireAuth } from '@/lib/auth';
 import { Decimal } from '@prisma/client/runtime/library';
 import { generateReceiptNumber } from '@/lib/counters';
 import { startOfDayIST } from '@/lib/accounting';
+import { revalidatePath } from 'next/cache';
+import { processCanonicalPayment } from '@/lib/payments';
 
 const PaymentSchema = z.object({
   customerId: z.string(),
@@ -67,91 +69,25 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Create payment record with the user-selected paymentDate
-      const receiptNumber = await generateReceiptNumber();
-      const payment = await tx.payment.create({
-        data: {
-          receiptNumber,
-          customerId,
-          saleId: saleId ?? null,
-          amount: payAmt,
-          paymentMode: paymentMode as 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'CHEQUE' | 'OTHER',
-          referenceNumber: referenceNumber ?? null,
-          notes: notes ?? null,
-          receivedById: auth.userId,
-          paymentDate: resolvedPaymentDate,
-        },
-      });
-
-      // Update sale paid/pending amounts
-      if (sale) {
-        const newPaid = sale.paidAmount.add(payAmt);
-        const newPending = sale.pendingAmount.sub(payAmt);
-        const newPaymentStatus = newPending.eq(0) ? 'PAID' : 'PARTIALLY_PAID';
-
-        await tx.sale.update({
-          where: { id: saleId! },
-          data: {
-            paidAmount: newPaid,
-            pendingAmount: newPending,
-            paymentStatus: newPaymentStatus as 'PAID' | 'PARTIALLY_PAID' | 'UNPAID' | 'OVERDUE',
-          },
-        });
-
-        // Cancel pending reminders if fully paid
-        if (newPending.eq(0)) {
-          await tx.reminder.updateMany({
-            where: { saleId: saleId!, status: 'PENDING' },
-            data: { status: 'CANCELLED' },
-          });
-        }
-      }
-
-      // Update customer balance — canonical: subtract payment from outstanding
-      const newBalance = customer.currentBalance.sub(payAmt);
-      // Allow balance to go negative (customer advanced payment)
-      await tx.customer.update({
-        where: { id: customerId },
-        data: { currentBalance: newBalance },
-      });
-
-      // Ledger entry
-      await tx.creditLedger.create({
-        data: {
-          customerId,
-          saleId: saleId ?? null,
-          paymentId: payment.id,
-          transactionType: 'PAYMENT_RECEIVED',
-          amount: payAmt,
-          balanceAfter: newBalance,
-          description: `Payment received — ${paymentMode}${referenceNumber ? ` (Ref: ${referenceNumber})` : ''}`,
-        },
-      });
-
-      // Notification
-      await tx.notification.create({
-        data: {
-          title: 'Payment Received',
-          message: `₹${amount} received from ${customer.fullName} (${customer.customerCode})`,
-          type: 'PAYMENT',
-          relatedEntityType: 'Payment',
-          relatedEntityId: payment.id,
-        },
-      });
-
-      // Audit log
-      await tx.auditLog.create({
-        data: {
-          userId: auth.userId,
-          action: 'CREATE',
-          entityType: 'Payment',
-          entityId: payment.id,
-          newData: { amount: amount.toString(), paymentMode, customerId, saleId, paymentDate: resolvedPaymentDate.toISOString() },
-        },
+      const { payment, newBalance } = await processCanonicalPayment(tx, {
+        customerId,
+        saleId: saleId ?? null,
+        amount: payAmt,
+        paymentMode: paymentMode as any,
+        referenceNumber: referenceNumber ?? null,
+        notes: notes ?? null,
+        receivedById: auth.userId,
+        resolvedPaymentDate,
       });
 
       return { payment, newBalance };
     });
+
+    revalidatePath('/dashboard');
+    revalidatePath('/dashboard/customers');
+    revalidatePath('/dashboard/credit');
+    revalidatePath('/dashboard/overdue-customers');
+    revalidatePath(`/dashboard/customers/${customerId}`);
 
     return NextResponse.json(result, { status: 201 });
   } catch (err: unknown) {

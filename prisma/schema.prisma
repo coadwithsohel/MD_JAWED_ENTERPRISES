@@ -8,7 +8,583 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// ─── Enums ───────────────────────────────────────────────────────────────────
+model User {
+  id                    String                  @id @default(cuid())
+  fullName              String
+  mobile                String                  @unique
+  email                 String?                 @unique
+  passwordHash          String
+  role                  UserRole                @default(STAFF)
+  isActive              Boolean                 @default(true)
+  lastLoginAt           DateTime?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  auditLogs             AuditLog[]
+  BulkEntryBatch        BulkEntryBatch[]
+  creditLedgers         CreditLedger[]
+  importBatches         CustomerImportBatch[]
+  Expense               Expense[]
+  inventoryMovs         InventoryMovement[]
+  InvoiceCostAllocation InvoiceCostAllocation[]
+  notifications         Notification[]
+  payments              Payment[]
+  sales                 Sale[]
+  SaleItem              SaleItem[]
+  tallyImportBatches    TallyImportBatch[]
+}
+
+model ShopSettings {
+  id                 String   @id @default(cuid())
+  businessName       String
+  tagline            String?
+  ownerName          String?
+  supportPhone       String?
+  whatsappNumber     String?
+  supportEmail       String?
+  primaryAddress     String?
+  city               String?
+  state              String?
+  pinCode            String?
+  gstNumber          String?
+  invoicePrefix      String   @default("INV")
+  nextInvoiceNumber  Int      @default(1)
+  defaultCreditDays  Int      @default(15)
+  currency           String   @default("INR")
+  timezone           String   @default("Asia/Kolkata")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  logoUrl            String?
+  termsAndConditions String?
+}
+
+model InvoiceCounter {
+  id        String   @id @default("singleton")
+  current   Int      @default(0)
+  prefix    String   @default("INV")
+  updatedAt DateTime @updatedAt
+}
+
+model CustomerCounter {
+  id        String   @id @default("singleton")
+  current   Int      @default(0)
+  prefix    String   @default("MJE-CUST")
+  updatedAt DateTime @updatedAt
+}
+
+model Customer {
+  id                   String                      @id @default(cuid())
+  customerCode         String                      @unique
+  fullName             String
+  mobile               String                      @unique
+  alternateMobile      String?
+  email                String?
+  address              String?
+  city                 String?
+  state                String?
+  pinCode              String?
+  notes                String?
+  creditLimit          Decimal                     @default(0) @db.Decimal(14, 2)
+  openingBalance       Decimal                     @default(0) @db.Decimal(14, 2)
+  currentBalance       Decimal                     @default(0) @db.Decimal(14, 2)
+  isActive             Boolean                     @default(true)
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+  normalizedMobile     String?
+  deletedAt            DateTime?
+  deletedBy            String?
+  deleteReason         String?
+  creditLimitUpdatedAt DateTime?
+  creditLimitUpdatedBy String?
+  ledgers              CreditLedger[]
+  importRows           CustomerImportRow[]
+  ledgerTransactions   CustomerLedgerTransaction[]
+  payments             Payment[]
+  reminders            Reminder[]
+  sales                Sale[]
+  tallyVouchers        TallyVoucher[]
+
+  @@index([fullName])
+  @@index([mobile])
+  @@index([normalizedMobile])
+  @@index([customerCode])
+  @@index([city])
+  @@index([isActive])
+  @@index([deletedAt])
+}
+
+model Category {
+  id        String     @id @default(cuid())
+  name      String
+  slug      String     @unique
+  parentId  String?
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  parent    Category?  @relation("CategoryToCategory", fields: [parentId], references: [id])
+  children  Category[] @relation("CategoryToCategory")
+  products  Product[]
+}
+
+model Brand {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+}
+
+model Product {
+  id                 String              @id @default(cuid())
+  sku                String              @unique
+  barcode            String?             @unique
+  name               String
+  description        String?
+  categoryId         String
+  brandId            String?
+  purchasePrice      Decimal             @db.Decimal(14, 2)
+  sellingPrice       Decimal             @db.Decimal(14, 2)
+  gstPercent         Decimal             @default(0) @db.Decimal(5, 2)
+  hsnCode            String?
+  stockQuantity      Int                 @default(0)
+  lowStockThreshold  Int                 @default(5)
+  trackSerialNumber  Boolean             @default(false)
+  trackImei          Boolean             @default(false)
+  isActive           Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  inventoryMovements InventoryMovement[]
+  brand              Brand?              @relation(fields: [brandId], references: [id])
+  category           Category            @relation(fields: [categoryId], references: [id])
+  serials            ProductSerial[]
+  saleItems          SaleItem[]
+
+  @@index([name])
+  @@index([sku])
+  @@index([barcode])
+  @@index([categoryId])
+  @@index([brandId])
+  @@index([isActive])
+  @@index([stockQuantity, isActive])
+}
+
+model ProductSerial {
+  id              String       @id @default(cuid())
+  productId       String
+  serialNumber    String?      @unique
+  imei1           String?      @unique
+  imei2           String?      @unique
+  status          SerialStatus @default(IN_STOCK)
+  purchaseDate    DateTime?
+  warrantyEndDate DateTime?
+  saleItemId      String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  product         Product      @relation(fields: [productId], references: [id])
+  saleItem        SaleItem?    @relation(fields: [saleItemId], references: [id])
+}
+
+model Sale {
+  id                    String                 @id @default(cuid())
+  invoiceNumber         String                 @unique
+  customerId            String?
+  saleType              SaleType
+  subtotal              Decimal                @db.Decimal(14, 2)
+  discountAmount        Decimal                @default(0) @db.Decimal(14, 2)
+  gstAmount             Decimal                @default(0) @db.Decimal(14, 2)
+  grandTotal            Decimal                @db.Decimal(14, 2)
+  paidAmount            Decimal                @default(0) @db.Decimal(14, 2)
+  pendingAmount         Decimal                @default(0) @db.Decimal(14, 2)
+  dueDate               DateTime?
+  paymentStatus         PaymentStatus
+  status                SaleStatus             @default(COMPLETED)
+  notes                 String?
+  createdById           String
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  saleDate              DateTime?
+  voidedAt              DateTime?
+  voidReason            String?
+  ledgers               CreditLedger[]
+  inventoryMovements    InventoryMovement[]
+  costAllocation InvoiceCostAllocation?
+  payments              Payment[]
+  reminders             Reminder[]
+  createdBy             User                   @relation(fields: [createdById], references: [id])
+  customer              Customer?              @relation(fields: [customerId], references: [id])
+  saleItems             SaleItem[]
+
+  @@index([invoiceNumber])
+  @@index([customerId])
+  @@index([createdAt])
+  @@index([dueDate])
+  @@index([paymentStatus])
+  @@index([status])
+  @@index([pendingAmount])
+  @@index([status, createdAt])
+  @@index([status, saleType, pendingAmount])
+}
+
+model SaleItem {
+  id                    String          @id @default(cuid())
+  saleId                String
+  productId             String
+  quantity              Int
+  unitPrice             Decimal         @db.Decimal(14, 2)
+  purchasePriceSnapshot Decimal         @db.Decimal(14, 2)
+  discountAmount        Decimal         @default(0) @db.Decimal(14, 2)
+  gstPercent            Decimal         @default(0) @db.Decimal(5, 2)
+  gstAmount             Decimal         @default(0) @db.Decimal(14, 2)
+  lineTotal             Decimal         @db.Decimal(14, 2)
+  createdAt             DateTime        @default(now())
+  costCompletedAt       DateTime?
+  costCompletedById     String?
+  costSource            String?
+  isEstimatedCost       Boolean         @default(false)
+  originalCostValue     Decimal?        @db.Decimal(14, 2)
+  productSerials        ProductSerial[]
+  User                  User?           @relation(fields: [costCompletedById], references: [id])
+  product               Product         @relation(fields: [productId], references: [id])
+  sale                  Sale            @relation(fields: [saleId], references: [id])
+}
+
+model Payment {
+  id              String              @id @default(cuid())
+  receiptNumber   String              @unique
+  customerId      String
+  saleId          String?
+  amount          Decimal             @db.Decimal(14, 2)
+  paymentMode     PaymentMode
+  referenceNumber String?
+  notes           String?
+  status          PaymentRecordStatus @default(COMPLETED)
+  receivedById    String
+  paymentDate     DateTime            @default(now())
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  voidedAt        DateTime?
+  voidReason      String?
+  bulkBatchId     String?
+  ledgers         CreditLedger[]
+  bulkBatch BulkEntryBatch?     @relation(fields: [bulkBatchId], references: [id])
+  customer        Customer            @relation(fields: [customerId], references: [id])
+  receivedBy      User                @relation(fields: [receivedById], references: [id])
+  sale            Sale?               @relation(fields: [saleId], references: [id])
+
+  @@index([customerId])
+  @@index([saleId])
+  @@index([paymentDate])
+  @@index([bulkBatchId])
+}
+
+model CreditLedger {
+  id              String                @id @default(cuid())
+  customerId      String
+  saleId          String?
+  paymentId       String?
+  transactionType LedgerTransactionType
+  amount          Decimal               @db.Decimal(14, 2)
+  balanceAfter    Decimal               @db.Decimal(14, 2)
+  description     String?
+  createdAt       DateTime              @default(now())
+  accountingDate  DateTime              @default(now())
+  createdById     String?
+  direction       String?
+  idempotencyKey  String?               @unique
+  notes           String?
+  reason          String?
+  referenceNumber String?
+  status          String                @default("COMPLETED")
+  updatedAt       DateTime              @default(now()) @updatedAt
+  voidReason      String?
+  voidedAt        DateTime?
+  bulkBatchId     String?
+  bulkBatch BulkEntryBatch?       @relation(fields: [bulkBatchId], references: [id])
+  createdBy       User?                 @relation(fields: [createdById], references: [id])
+  customer        Customer              @relation(fields: [customerId], references: [id])
+  payment         Payment?              @relation(fields: [paymentId], references: [id])
+  sale            Sale?                 @relation(fields: [saleId], references: [id])
+
+  @@index([customerId, createdAt])
+  @@index([saleId])
+  @@index([paymentId])
+  @@index([idempotencyKey])
+  @@index([bulkBatchId])
+}
+
+model InventoryMovement {
+  id             String                @id @default(cuid())
+  productId      String
+  saleId         String?
+  movementType   InventoryMovementType
+  quantity       Int
+  quantityBefore Int
+  quantityAfter  Int
+  reason         String?
+  createdById    String
+  createdAt      DateTime              @default(now())
+  createdBy      User                  @relation(fields: [createdById], references: [id])
+  product        Product               @relation(fields: [productId], references: [id])
+  sale           Sale?                 @relation(fields: [saleId], references: [id])
+
+  @@index([productId, createdAt])
+  @@index([saleId])
+}
+
+model Reminder {
+  id               String          @id @default(cuid())
+  customerId       String
+  saleId           String
+  reminderType     ReminderType
+  channel          ReminderChannel
+  scheduledAt      DateTime
+  sentAt           DateTime?
+  status           ReminderStatus  @default(PENDING)
+  message          String
+  providerResponse Json?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  customer         Customer        @relation(fields: [customerId], references: [id])
+  sale             Sale            @relation(fields: [saleId], references: [id])
+
+  @@unique([saleId, reminderType, channel])
+  @@index([scheduledAt])
+  @@index([status])
+  @@index([customerId])
+  @@index([saleId])
+}
+
+model Notification {
+  id                String   @id @default(cuid())
+  userId            String?
+  title             String
+  message           String
+  type              String
+  relatedEntityType String?
+  relatedEntityId   String?
+  isRead            Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  user              User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  oldData    Json?
+  newData    Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+}
+
+model CustomerImportBatch {
+  id               String              @id @default(cuid())
+  originalFileName String
+  storedFileName   String?
+  fileHash         String?             @unique
+  totalRows        Int                 @default(0)
+  validRows        Int                 @default(0)
+  importedRows     Int                 @default(0)
+  updatedRows      Int                 @default(0)
+  skippedRows      Int                 @default(0)
+  failedRows       Int                 @default(0)
+  importedById     String
+  status           ImportStatus        @default(UPLOADED)
+  errorSummary     Json?
+  createdAt        DateTime            @default(now())
+  completedAt      DateTime?
+  importedBy       User                @relation(fields: [importedById], references: [id])
+  rows             CustomerImportRow[]
+
+  @@index([importedById])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model CustomerImportRow {
+  id             String              @id @default(cuid())
+  importBatchId  String
+  rowNumber      Int
+  rawData        Json
+  normalizedData Json?
+  resultStatus   ImportRowStatus
+  customerId     String?
+  errorMessage   String?
+  createdAt      DateTime            @default(now())
+  customer       Customer?           @relation(fields: [customerId], references: [id])
+  importBatch    CustomerImportBatch @relation(fields: [importBatchId], references: [id])
+
+  @@index([importBatchId])
+  @@index([resultStatus])
+}
+
+model TallyImportBatch {
+  id                 String                      @id @default(cuid())
+  originalFileName   String
+  storedFileName     String?
+  importDate         DateTime                    @default(now())
+  importedById       String
+  totalVouchers      Int                         @default(0)
+  salesCount         Int                         @default(0)
+  receiptCount       Int                         @default(0)
+  debitNoteCount     Int                         @default(0)
+  creditNoteCount    Int                         @default(0)
+  duplicateCount     Int                         @default(0)
+  skippedCount       Int                         @default(0)
+  errorCount         Int                         @default(0)
+  debitTotal         Decimal                     @default(0) @db.Decimal(14, 2)
+  creditTotal        Decimal                     @default(0) @db.Decimal(14, 2)
+  status             ImportStatus                @default(UPLOADED)
+  errorSummary       Json?
+  completedAt        DateTime?
+  createdAt          DateTime                    @default(now())
+  ledgerTransactions CustomerLedgerTransaction[]
+  importedBy         User                        @relation(fields: [importedById], references: [id])
+  vouchers           TallyVoucher[]
+
+  @@index([importedById])
+  @@index([createdAt])
+  @@index([status])
+}
+
+model TallyVoucher {
+  id                   String           @id @default(cuid())
+  importBatchId        String
+  tallyGuid            String?
+  tallyRemoteId        String?
+  tallyMasterId        String?
+  voucherKey           String?
+  sourceFileName       String?
+  customerName         String?
+  customerId           String?
+  voucherDate          DateTime
+  voucherType          String
+  voucherNumber        String?
+  debit                Decimal          @default(0) @db.Decimal(14, 2)
+  credit               Decimal          @default(0) @db.Decimal(14, 2)
+  narration            String?
+  reference            String?
+  isDuplicate          Boolean          @default(false)
+  isSkipped            Boolean          @default(false)
+  errorMessage         String?
+  importStatus         ImportRowStatus  @default(PARSED)
+  ledgerEntryId        String?
+  createdAt            DateTime         @default(now())
+  againstVoucherNumber String?
+  dueDate              DateTime?
+  matchedCustomerId    String?
+  matchedCustomerName  String?
+  mobile               String?
+  paymentDate          DateTime?
+  paymentStatus        String?
+  customer             Customer?        @relation(fields: [customerId], references: [id])
+  importBatch          TallyImportBatch @relation(fields: [importBatchId], references: [id])
+
+  @@index([importBatchId])
+  @@index([customerId])
+  @@index([tallyGuid])
+  @@index([voucherDate])
+  @@index([voucherKey])
+  @@index([importStatus])
+  @@index([dueDate])
+  @@index([againstVoucherNumber])
+  @@index([importBatchId, importStatus])
+}
+
+model CustomerLedgerTransaction {
+  id               String            @id @default(cuid())
+  customerId       String
+  transactionDate  DateTime
+  voucherType      String
+  voucherNumber    String?
+  particulars      String
+  debit            Decimal           @default(0) @db.Decimal(14, 2)
+  credit           Decimal           @default(0) @db.Decimal(14, 2)
+  sourceSystem     String?           @default("TALLY")
+  sourceGuid       String?
+  sourceRemoteId   String?
+  sourceVchKey     String?
+  sourceMasterId   String?
+  importBatchId    String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  againstReference String?
+  dueDate          DateTime?
+  customer         Customer          @relation(fields: [customerId], references: [id])
+  importBatch      TallyImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  @@index([customerId, transactionDate])
+  @@index([importBatchId])
+  @@index([sourceGuid])
+  @@index([sourceRemoteId])
+}
+
+model BulkEntryBatch {
+  id                 String             @id @default(cuid())
+  batchReference     String             @unique
+  entryDate          DateTime
+  defaultPaymentMode PaymentMode?
+  notes              String?
+  rowCount           Int
+  totalAmount        Decimal            @db.Decimal(14, 2)
+  status             String             @default("POSTED")
+  idempotencyKey     String             @unique
+  createdById        String
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  batchType          BulkEntryBatchType @default(PAYMENT)
+  createdBy User @relation(fields: [createdById], references: [id])
+  ledgers CreditLedger[]
+  payments Payment[]
+
+  @@index([batchType])
+  @@index([createdAt])
+  @@index([createdById])
+  @@index([status])
+}
+
+model Expense {
+  id              String          @id @default(cuid())
+  category        ExpenseCategory
+  amount          Decimal         @db.Decimal(14, 2)
+  expenseDate     DateTime
+  description     String?
+  referenceNumber String?
+  createdById     String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime           @updatedAt
+  status          String          @default("COMPLETED")
+  voidedAt        DateTime?
+  voidReason      String?
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@index([category])
+  @@index([expenseDate])
+}
+
+model InvoiceCostAllocation {
+  id              String   @id @default(cuid())
+  saleId          String   @unique
+  totalCostAmount Decimal  @db.Decimal(14, 2)
+  notes           String?
+  costSource      String
+  isEstimatedCost Boolean  @default(false)
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime           @updatedAt
+  createdBy User @relation(fields: [createdById], references: [id])
+  Sale            Sale     @relation(fields: [saleId], references: [id])
+}
 
 enum UserRole {
   OWNER
@@ -125,519 +701,17 @@ enum ImportRowStatus {
   IMPORTED
 }
 
-// ─── Models ──────────────────────────────────────────────────────────────────
-
-model User {
-  id            String              @id @default(cuid())
-  fullName      String
-  mobile        String              @unique
-  email         String?             @unique
-  passwordHash  String
-  role          UserRole            @default(STAFF)
-  isActive      Boolean             @default(true)
-  lastLoginAt   DateTime?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  sales         Sale[]
-  payments      Payment[]
-  inventoryMovs InventoryMovement[]
-  notifications Notification[]
-  auditLogs     AuditLog[]
-  importBatches CustomerImportBatch[]
-  tallyImportBatches TallyImportBatch[]
-  creditLedgers CreditLedger[]
+enum BulkEntryBatchType {
+  PAYMENT
+  MANUAL_ADJUSTMENT
 }
 
-model ShopSettings {
-  id                String   @id @default(cuid())
-  businessName      String
-  tagline           String?
-  ownerName         String?
-  supportPhone      String?
-  whatsappNumber    String?
-  supportEmail      String?
-  primaryAddress    String?
-  city              String?
-  state             String?
-  pinCode           String?
-  gstNumber         String?
-  logoUrl           String?
-  invoicePrefix     String   @default("INV")
-  nextInvoiceNumber Int      @default(1)
-  defaultCreditDays Int      @default(15)
-  currency          String   @default("INR")
-  timezone          String   @default("Asia/Kolkata")
-  termsAndConditions String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-}
-
-// Atomic invoice counter — prevents duplicate invoice numbers under concurrency
-model InvoiceCounter {
-  id        String   @id @default("singleton")
-  current   Int      @default(0)
-  prefix    String   @default("INV")
-  updatedAt DateTime @updatedAt
-}
-
-// Atomic customer code counter
-model CustomerCounter {
-  id        String   @id @default("singleton")
-  current   Int      @default(0)
-  prefix    String   @default("MJE-CUST")
-  updatedAt DateTime @updatedAt
-}
-
-model Customer {
-  id               String         @id @default(cuid())
-  customerCode     String         @unique
-  fullName         String
-  mobile           String         @unique
-  normalizedMobile String?
-  alternateMobile  String?
-  email            String?
-  address          String?
-  city             String?
-  state            String?
-  pinCode          String?
-  notes            String?
-  creditLimit      Decimal        @default(0) @db.Decimal(14, 2)
-  openingBalance   Decimal        @default(0) @db.Decimal(14, 2)
-  currentBalance   Decimal        @default(0) @db.Decimal(14, 2)
-  isActive              Boolean        @default(true)
-  // ─── Soft-delete fields ───────────────────────────────────────────────────
-  deletedAt             DateTime?
-  deletedBy             String?        // userId of who deactivated/deleted
-  deleteReason          String?
-  // ─── Credit-limit audit fields ────────────────────────────────────────────
-  creditLimitUpdatedAt  DateTime?
-  creditLimitUpdatedBy  String?        // userId of who last changed credit limit
-  createdAt             DateTime       @default(now())
-  updatedAt             DateTime       @updatedAt
-  sales                 Sale[]
-  payments              Payment[]
-  ledgers               CreditLedger[]
-  ledgerTransactions    CustomerLedgerTransaction[]
-  reminders             Reminder[]
-  importRows            CustomerImportRow[]
-  tallyVouchers         TallyVoucher[]
-
-  @@index([fullName])
-  @@index([mobile])
-  @@index([normalizedMobile])
-  @@index([customerCode])
-  @@index([city])
-  @@index([isActive])
-  @@index([deletedAt])
-}
-
-model Category {
-  id        String     @id @default(cuid())
-  name      String
-  slug      String     @unique
-  parentId  String?
-  parent    Category?  @relation("CategoryToCategory", fields: [parentId], references: [id])
-  children  Category[] @relation("CategoryToCategory")
-  isActive  Boolean    @default(true)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  products  Product[]
-}
-
-model Brand {
-  id        String    @id @default(cuid())
-  name      String    @unique
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  products  Product[]
-}
-
-model Product {
-  id                 String              @id @default(cuid())
-  sku                String              @unique
-  barcode            String?             @unique
-  name               String
-  description        String?
-  categoryId         String
-  category           Category            @relation(fields: [categoryId], references: [id])
-  brandId            String?
-  brand              Brand?              @relation(fields: [brandId], references: [id])
-  purchasePrice      Decimal             @db.Decimal(14, 2)
-  sellingPrice       Decimal             @db.Decimal(14, 2)
-  gstPercent         Decimal             @default(0) @db.Decimal(5, 2)
-  hsnCode            String?
-  stockQuantity      Int                 @default(0)
-  lowStockThreshold  Int                 @default(5)
-  trackSerialNumber  Boolean             @default(false)
-  trackImei          Boolean             @default(false)
-  isActive           Boolean             @default(true)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  serials            ProductSerial[]
-  saleItems          SaleItem[]
-  inventoryMovements InventoryMovement[]
-
-  @@index([name])
-  @@index([sku])
-  @@index([barcode])
-  @@index([categoryId])
-  @@index([brandId])
-  @@index([isActive])
-  @@index([stockQuantity, isActive])
-}
-
-model ProductSerial {
-  id              String       @id @default(cuid())
-  productId       String
-  product         Product      @relation(fields: [productId], references: [id])
-  serialNumber    String?      @unique
-  imei1           String?      @unique
-  imei2           String?      @unique
-  status          SerialStatus @default(IN_STOCK)
-  purchaseDate    DateTime?
-  warrantyEndDate DateTime?
-  saleItemId      String?
-  saleItem        SaleItem?    @relation(fields: [saleItemId], references: [id])
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-}
-
-model Sale {
-  id                 String              @id @default(cuid())
-  invoiceNumber      String              @unique
-  customerId         String?
-  customer           Customer?           @relation(fields: [customerId], references: [id])
-  saleType           SaleType
-  subtotal           Decimal             @db.Decimal(14, 2)
-  discountAmount     Decimal             @default(0) @db.Decimal(14, 2)
-  gstAmount          Decimal             @default(0) @db.Decimal(14, 2)
-  grandTotal         Decimal             @db.Decimal(14, 2)
-  paidAmount         Decimal             @default(0) @db.Decimal(14, 2)
-  pendingAmount      Decimal             @default(0) @db.Decimal(14, 2)
-  dueDate            DateTime?
-  paymentStatus      PaymentStatus
-  status             SaleStatus          @default(COMPLETED)
-  notes              String?
-  // ─── Edit/Void tracking ────────────────────────────────────────────────────
-  saleDate           DateTime?           // User-editable display date; null means use createdAt
-  voidedAt           DateTime?           // Set when voided; null = active
-  voidReason         String?             // Reason provided by admin when voiding
-  createdById        String
-  createdBy          User                @relation(fields: [createdById], references: [id])
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  saleItems          SaleItem[]
-  payments           Payment[]
-  ledgers            CreditLedger[]
-  inventoryMovements InventoryMovement[]
-  reminders          Reminder[]
-
-  @@index([invoiceNumber])
-  @@index([customerId])
-  @@index([createdAt])
-  @@index([dueDate])
-  @@index([paymentStatus])
-  @@index([status])
-  @@index([pendingAmount])
-  @@index([status, createdAt])
-  @@index([status, saleType, pendingAmount])
-}
-
-model SaleItem {
-  id                    String          @id @default(cuid())
-  saleId                String
-  sale                  Sale            @relation(fields: [saleId], references: [id])
-  productId             String
-  product               Product         @relation(fields: [productId], references: [id])
-  quantity              Int
-  unitPrice             Decimal         @db.Decimal(14, 2)
-  purchasePriceSnapshot Decimal         @db.Decimal(14, 2)
-  discountAmount        Decimal         @default(0) @db.Decimal(14, 2)
-  gstPercent            Decimal         @default(0) @db.Decimal(5, 2)
-  gstAmount             Decimal         @default(0) @db.Decimal(14, 2)
-  lineTotal             Decimal         @db.Decimal(14, 2)
-  createdAt             DateTime        @default(now())
-  productSerials        ProductSerial[]
-}
-
-model Payment {
-  id              String              @id @default(cuid())
-  receiptNumber   String              @unique
-  customerId      String
-  customer        Customer            @relation(fields: [customerId], references: [id])
-  saleId          String?
-  sale            Sale?               @relation(fields: [saleId], references: [id])
-  amount          Decimal             @db.Decimal(14, 2)
-  paymentMode     PaymentMode
-  referenceNumber String?
-  notes           String?
-  status          PaymentRecordStatus @default(COMPLETED)
-  receivedById    String
-  receivedBy      User                @relation(fields: [receivedById], references: [id])
-  paymentDate     DateTime            @default(now())
-  // ─── Edit/Void tracking ────────────────────────────────────────────────────
-  voidedAt        DateTime?           // Set when voided; null = active
-  voidReason      String?             // Reason provided by admin when voiding
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  ledgers         CreditLedger[]
-
-  @@index([customerId])
-  @@index([saleId])
-  @@index([paymentDate])
-}
-
-model CreditLedger {
-  id              String                @id @default(cuid())
-  customerId      String
-  customer        Customer              @relation(fields: [customerId], references: [id])
-  saleId          String?
-  sale            Sale?                 @relation(fields: [saleId], references: [id])
-  paymentId       String?
-  payment         Payment?              @relation(fields: [paymentId], references: [id])
-  transactionType LedgerTransactionType
-  amount          Decimal               @db.Decimal(14, 2)
-  balanceAfter    Decimal               @db.Decimal(14, 2)
-  description     String?
-  direction       String?               // "DEBIT" | "CREDIT"
-  referenceNumber String?
-  notes           String?
-  reason          String?
-  status          String                @default("COMPLETED") // "COMPLETED" | "VOIDED"
-  voidedAt        DateTime?
-  voidReason      String?
-  idempotencyKey  String?               @unique
-  createdById     String?
-  createdBy       User?                 @relation(fields: [createdById], references: [id])
-  accountingDate  DateTime              @default(now())
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @default(now()) @updatedAt
-
-  @@index([customerId, createdAt])
-  @@index([saleId])
-  @@index([paymentId])
-  @@index([idempotencyKey])
-}
-
-model InventoryMovement {
-  id             String                @id @default(cuid())
-  productId      String
-  product        Product               @relation(fields: [productId], references: [id])
-  saleId         String?
-  sale           Sale?                 @relation(fields: [saleId], references: [id])
-  movementType   InventoryMovementType
-  quantity       Int
-  quantityBefore Int
-  quantityAfter  Int
-  reason         String?
-  createdById    String
-  createdBy      User                  @relation(fields: [createdById], references: [id])
-  createdAt      DateTime              @default(now())
-
-  @@index([productId, createdAt])
-  @@index([saleId])
-}
-
-model Reminder {
-  id               String          @id @default(cuid())
-  customerId       String
-  customer         Customer        @relation(fields: [customerId], references: [id])
-  saleId           String
-  sale             Sale            @relation(fields: [saleId], references: [id])
-  reminderType     ReminderType
-  channel          ReminderChannel
-  scheduledAt      DateTime
-  sentAt           DateTime?
-  status           ReminderStatus  @default(PENDING)
-  message          String
-  providerResponse Json?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-
-  @@index([scheduledAt])
-  @@index([status])
-  @@index([customerId])
-  @@index([saleId])
-  @@unique([saleId, reminderType, channel])
-}
-
-model Notification {
-  id                String   @id @default(cuid())
-  userId            String?
-  user              User?    @relation(fields: [userId], references: [id])
-  title             String
-  message           String
-  type              String
-  relatedEntityType String?
-  relatedEntityId   String?
-  isRead            Boolean  @default(false)
-  createdAt         DateTime @default(now())
-
-  @@index([userId, isRead, createdAt])
-}
-
-model AuditLog {
-  id         String   @id @default(cuid())
-  userId     String?
-  user       User?    @relation(fields: [userId], references: [id])
-  action     String
-  entityType String
-  entityId   String?
-  oldData    Json?
-  newData    Json?
-  ipAddress  String?
-  createdAt  DateTime @default(now())
-
-  @@index([userId])
-  @@index([entityType])
-  @@index([entityId])
-  @@index([createdAt])
-}
-
-// ─── Excel Import Models ──────────────────────────────────────────────────────
-
-model CustomerImportBatch {
-  id              String      @id @default(cuid())
-  originalFileName String
-  storedFileName  String?
-  fileHash        String?     @unique
-  totalRows       Int         @default(0)
-  validRows       Int         @default(0)
-  importedRows    Int         @default(0)
-  updatedRows     Int         @default(0)
-  skippedRows     Int         @default(0)
-  failedRows      Int         @default(0)
-  importedById    String
-  importedBy      User        @relation(fields: [importedById], references: [id])
-  status          ImportStatus @default(UPLOADED)
-  errorSummary    Json?
-  createdAt       DateTime    @default(now())
-  completedAt     DateTime?
-  rows            CustomerImportRow[]
-
-  @@index([importedById])
-  @@index([status])
-  @@index([createdAt])
-}
-
-model CustomerImportRow {
-  id              String          @id @default(cuid())
-  importBatchId   String
-  importBatch     CustomerImportBatch @relation(fields: [importBatchId], references: [id])
-  rowNumber       Int
-  rawData         Json
-  normalizedData  Json?
-  resultStatus    ImportRowStatus
-  customerId      String?
-  customer        Customer?       @relation(fields: [customerId], references: [id])
-  errorMessage    String?
-  createdAt       DateTime        @default(now())
-
-  @@index([importBatchId])
-  @@index([resultStatus])
-}
-
-// ─── Tally Voucher Import ────────────────────────────────────────────────────
-
-model TallyImportBatch {
-  id                  String   @id @default(cuid())
-  originalFileName    String
-  storedFileName      String?
-  importDate          DateTime @default(now())
-  importedById        String
-  importedBy          User     @relation(fields: [importedById], references: [id])
-  totalVouchers       Int      @default(0)
-  salesCount          Int      @default(0)
-  receiptCount        Int      @default(0)
-  debitNoteCount      Int      @default(0)
-  creditNoteCount     Int      @default(0)
-  duplicateCount      Int      @default(0)
-  skippedCount        Int      @default(0)
-  errorCount          Int      @default(0)
-  debitTotal          Decimal  @default(0) @db.Decimal(14, 2)
-  creditTotal         Decimal  @default(0) @db.Decimal(14, 2)
-  status              ImportStatus @default(UPLOADED)
-  errorSummary        Json?
-  completedAt         DateTime?
-  createdAt           DateTime @default(now())
-  vouchers            TallyVoucher[]
-  ledgerTransactions  CustomerLedgerTransaction[]
-
-  @@index([importedById])
-  @@index([createdAt])
-  @@index([status])
-}
-
-model TallyVoucher {
-  id                  String   @id @default(cuid())
-  importBatchId       String
-  importBatch         TallyImportBatch @relation(fields: [importBatchId], references: [id])
-  tallyGuid           String?
-  tallyRemoteId       String?
-  tallyMasterId       String?
-  voucherKey          String?
-  sourceFileName      String?
-  customerName        String?  // Original customer name from Tally
-  mobile              String?
-  customerId          String?  // Matched customer ID
-  customer            Customer? @relation(fields: [customerId], references: [id])
-  matchedCustomerId   String?
-  matchedCustomerName String?
-  voucherDate         DateTime
-  dueDate             DateTime?
-  paymentDate         DateTime?
-  voucherType         String   // 'SALES' | 'RECEIPT' | 'DEBIT_NOTE' | 'CREDIT_NOTE' | 'OPENING_BALANCE'
-  voucherNumber       String?
-  againstVoucherNumber String?
-  paymentStatus       String?
-  debit               Decimal  @default(0) @db.Decimal(14, 2)
-  credit              Decimal  @default(0) @db.Decimal(14, 2)
-  narration           String?
-  reference           String?
-  isDuplicate         Boolean  @default(false)
-  isSkipped           Boolean  @default(false)
-  errorMessage        String?
-  importStatus        ImportRowStatus @default(PARSED)
-  ledgerEntryId       String?  // Link to created CreditLedger entry, if any
-  createdAt           DateTime @default(now())
-
-  @@index([importBatchId])
-  @@index([customerId])
-  @@index([tallyGuid])
-  @@index([voucherDate])
-  @@index([voucherKey])
-  @@index([importStatus])
-  @@index([dueDate])
-  @@index([againstVoucherNumber])
-  @@index([importBatchId, importStatus])
-}
-
-model CustomerLedgerTransaction {
-  id              String   @id @default(cuid())
-  customerId      String
-  customer        Customer @relation(fields: [customerId], references: [id])
-  transactionDate DateTime
-  dueDate         DateTime?
-  voucherType     String
-  voucherNumber   String?
-  againstReference String?
-  particulars     String
-  debit           Decimal  @default(0) @db.Decimal(14, 2)
-  credit          Decimal  @default(0) @db.Decimal(14, 2)
-  sourceSystem    String?  @default("TALLY")
-  sourceGuid      String?
-  sourceRemoteId  String?
-  sourceVchKey    String?
-  sourceMasterId  String?
-  importBatchId   String?
-  importBatch     TallyImportBatch? @relation(fields: [importBatchId], references: [id])
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@index([customerId, transactionDate])
-  @@index([importBatchId])
-  @@index([sourceGuid])
-  @@index([sourceRemoteId])
-  // @@unique([sourceSystem, sourceGuid])  // removed: multiple rows with same sourceSystem + null sourceGuid caused silent failures
+enum ExpenseCategory {
+  SHOP_RENT
+  STAFF_SALARY
+  ELECTRICITY_BILL
+  INTERNET
+  TRANSPORT
+  REPAIR
+  OTHER_EXPENSES
 }

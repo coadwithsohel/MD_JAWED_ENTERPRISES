@@ -15,7 +15,8 @@ ALTER TABLE "TallyVoucher" ADD COLUMN IF NOT EXISTS "paymentDate" TIMESTAMP(3);
 ALTER TABLE "TallyVoucher" ADD COLUMN IF NOT EXISTS "paymentStatus" TEXT;
 
 -- Add default for importStatus if not already set
-ALTER TABLE "TallyVoucher" ALTER COLUMN "importStatus" SET DEFAULT 'PARSED';
+-- ALTER TYPE "ImportRowStatus" ADD VALUE IF NOT EXISTS 'PARSED';
+-- ALTER TABLE "TallyVoucher" ALTER COLUMN "importStatus" SET DEFAULT 'PARSED';
 
 -- CreateIndex (use IF NOT EXISTS)
 CREATE INDEX IF NOT EXISTS "TallyVoucher_voucherKey_idx" ON "TallyVoucher"("voucherKey");

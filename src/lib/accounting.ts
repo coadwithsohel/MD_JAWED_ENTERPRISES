@@ -189,72 +189,104 @@ export interface CustomerAccountingSummary {
   advance: Decimal;      // Math.max(-closingBalance, 0)
   sales: Decimal;        // total CREDIT_SALE amount
   receipts: Decimal;     // total PAYMENT_RECEIVED amount
+  latestActivityDate: Date | null;
+  nextReminderDate: Date | null;
 }
 
 /**
  * Get single customer accounting summary from canonical CreditLedger source.
  */
-export async function getCustomerAccountingSummary(
-  customerId: string
-): Promise<CustomerAccountingSummary> {
+export async function getCustomerAccountingSummary(customerId: string): Promise<CustomerAccountingSummary> {
   const customer = await prisma.customer.findUnique({
-    where: { id: customerId },
+    where: { id: customerId, isActive: true, deletedAt: null },
     select: { openingBalance: true },
   });
 
-  const openingBalance = customer?.openingBalance ?? new Decimal(0);
+  if (!customer) throw new Error("Customer not found or inactive");
+  const openingBalance = customer.openingBalance ?? new Decimal(0);
 
-  // Active ledger entries only (not voided)
-  const ledgerEntries = await prisma.creditLedger.findMany({
-    where: {
-      customerId,
-      status: { not: "VOIDED" },
-      transactionType: { not: "OPENING_BALANCE" },
-    },
-    select: {
-      transactionType: true,
-      amount: true,
-      direction: true,
-    },
-  });
+  const [latestSale, latestPayment, ledgerEntries] = await Promise.all([
+    prisma.sale.findFirst({
+      where: { customerId, status: { not: "CANCELLED" } },
+      orderBy: { saleDate: "desc" },
+      select: { saleDate: true },
+    }),
+    prisma.payment.findFirst({
+      where: { customerId, status: { not: "VOIDED" } },
+      orderBy: { paymentDate: "desc" },
+      select: { paymentDate: true },
+    }),
+    prisma.creditLedger.findMany({
+      where: {
+        customerId,
+        status: { not: "VOIDED" },
+      },
+      select: {
+        transactionType: true,
+        amount: true,
+        direction: true,
+        accountingDate: true,
+      },
+    }),
+  ]);
 
   let totalDebit = new Decimal(0);
   let totalCredit = new Decimal(0);
   let sales = new Decimal(0);
   let receipts = new Decimal(0);
 
+  let latestActivityDate: Date | null = null;
+  if (latestSale?.saleDate) latestActivityDate = latestSale.saleDate;
+  if (latestPayment?.paymentDate && (!latestActivityDate || latestPayment.paymentDate > latestActivityDate)) {
+    latestActivityDate = latestPayment.paymentDate;
+  }
+
   for (const entry of ledgerEntries) {
     const amt = entry.amount ?? new Decimal(0);
     const type = entry.transactionType;
 
-    if (
-      type === "CREDIT_SALE" ||
-      type === "PAYMENT_REVERSAL" ||
-      type === "MANUAL_DEBIT" ||
-      (type === "ADJUSTMENT" && entry.direction !== "CREDIT")
-    ) {
-      totalDebit = totalDebit.add(amt);
-    } else if (
-      type === "PAYMENT_RECEIVED" ||
-      type === "SALE_CANCELLED" ||
-      type === "RETURN_CREDIT" ||
-      type === "MANUAL_CREDIT" ||
-      (type === "ADJUSTMENT" && entry.direction === "CREDIT")
-    ) {
-      totalCredit = totalCredit.add(amt);
+    if (type !== "OPENING_BALANCE") {
+      if (
+        type === "CREDIT_SALE" ||
+        type === "PAYMENT_REVERSAL" ||
+        type === "MANUAL_DEBIT" ||
+        (type === "ADJUSTMENT" && entry.direction !== "CREDIT")
+      ) {
+        totalDebit = totalDebit.add(amt);
+      } else if (
+        type === "PAYMENT_RECEIVED" ||
+        type === "SALE_CANCELLED" ||
+        type === "RETURN_CREDIT" ||
+        type === "MANUAL_CREDIT" ||
+        (type === "ADJUSTMENT" && entry.direction === "CREDIT")
+      ) {
+        totalCredit = totalCredit.add(amt);
+      }
+
+      if (type === "CREDIT_SALE") {
+        sales = sales.add(amt);
+      }
+      if (type === "PAYMENT_RECEIVED") {
+        receipts = receipts.add(amt);
+      }
     }
 
-    if (type === "CREDIT_SALE") {
-      sales = sales.add(amt);
-    }
-    if (type === "PAYMENT_RECEIVED") {
-      receipts = receipts.add(amt);
+    if (["MANUAL_DEBIT", "MANUAL_CREDIT", "ADJUSTMENT", "OPENING_BALANCE"].includes(type)) {
+      if (entry.accountingDate && (!latestActivityDate || entry.accountingDate > latestActivityDate)) {
+        latestActivityDate = entry.accountingDate;
+      }
     }
   }
 
   const closingBalance = openingBalance.add(totalDebit).sub(totalCredit);
   const outstanding = Decimal.max(closingBalance, new Decimal(0));
   const advance = Decimal.max(closingBalance.negated(), new Decimal(0));
+
+  let nextReminderDate: Date | null = null;
+  if (latestActivityDate && outstanding.gt(0)) {
+    nextReminderDate = new Date(startOfDayIST(latestActivityDate));
+    nextReminderDate.setDate(nextReminderDate.getDate() + 15);
+  }
 
   return {
     customerId,
@@ -266,6 +298,8 @@ export async function getCustomerAccountingSummary(
     advance,
     sales,
     receipts,
+    latestActivityDate,
+    nextReminderDate,
   };
 }
 
@@ -282,23 +316,36 @@ export async function getAllCustomerAccountingSummaries(): Promise<Map<string, C
   const customerIds = customers.map(c => c.id);
   const openingMap = new Map(customers.map(c => [c.id, c.openingBalance ?? new Decimal(0)]));
 
-  // Get all active CreditLedger entries for these customers
-  const ledgerEntries = await prisma.creditLedger.findMany({
-    where: {
-      customerId: { in: customerIds },
-      status: { not: "VOIDED" },
-      transactionType: { not: "OPENING_BALANCE" },
-    },
-    select: {
-      customerId: true,
-      transactionType: true,
-      amount: true,
-      direction: true,
-    },
-  });
+  const [ledgerEntries, maxSales, maxPayments] = await Promise.all([
+    prisma.creditLedger.findMany({
+      where: {
+        customerId: { in: customerIds },
+        status: { not: "VOIDED" },
+      },
+      select: {
+        customerId: true,
+        transactionType: true,
+        amount: true,
+        direction: true,
+        accountingDate: true,
+      },
+    }),
+    prisma.sale.groupBy({
+      by: ['customerId'],
+      _max: { saleDate: true },
+      where: { customerId: { in: customerIds }, status: { not: 'CANCELLED' } }
+    }),
+    prisma.payment.groupBy({
+      by: ['customerId'],
+      _max: { paymentDate: true },
+      where: { customerId: { in: customerIds }, status: { not: 'VOIDED' } }
+    })
+  ]);
 
-  // Aggregate per customer
-  type Agg = { totalDebit: Decimal; totalCredit: Decimal; sales: Decimal; receipts: Decimal };
+  const saleDateMap = new Map(maxSales.map(m => [m.customerId, m._max.saleDate]));
+  const paymentDateMap = new Map(maxPayments.map(m => [m.customerId, m._max.paymentDate]));
+
+  type Agg = { totalDebit: Decimal; totalCredit: Decimal; sales: Decimal; receipts: Decimal; latestActivityDate: Date | null };
   const aggMap = new Map<string, Agg>();
 
   for (const entry of ledgerEntries) {
@@ -307,39 +354,47 @@ export async function getAllCustomerAccountingSummaries(): Promise<Map<string, C
       totalCredit: new Decimal(0),
       sales: new Decimal(0),
       receipts: new Decimal(0),
+      latestActivityDate: null,
     };
 
     const amount = entry.amount ?? new Decimal(0);
     const type = entry.transactionType;
 
-    if (
-      type === "CREDIT_SALE" ||
-      type === "PAYMENT_REVERSAL" ||
-      type === "MANUAL_DEBIT" ||
-      (type === "ADJUSTMENT" && entry.direction !== "CREDIT")
-    ) {
-      agg.totalDebit = agg.totalDebit.add(amount);
-    } else if (
-      type === "PAYMENT_RECEIVED" ||
-      type === "SALE_CANCELLED" ||
-      type === "RETURN_CREDIT" ||
-      type === "MANUAL_CREDIT" ||
-      (type === "ADJUSTMENT" && entry.direction === "CREDIT")
-    ) {
-      agg.totalCredit = agg.totalCredit.add(amount);
+    if (type !== "OPENING_BALANCE") {
+      if (
+        type === "CREDIT_SALE" ||
+        type === "PAYMENT_REVERSAL" ||
+        type === "MANUAL_DEBIT" ||
+        (type === "ADJUSTMENT" && entry.direction !== "CREDIT")
+      ) {
+        agg.totalDebit = agg.totalDebit.add(amount);
+      } else if (
+        type === "PAYMENT_RECEIVED" ||
+        type === "SALE_CANCELLED" ||
+        type === "RETURN_CREDIT" ||
+        type === "MANUAL_CREDIT" ||
+        (type === "ADJUSTMENT" && entry.direction === "CREDIT")
+      ) {
+        agg.totalCredit = agg.totalCredit.add(amount);
+      }
+
+      if (type === "CREDIT_SALE") {
+        agg.sales = agg.sales.add(amount);
+      }
+      if (type === "PAYMENT_RECEIVED") {
+        agg.receipts = agg.receipts.add(amount);
+      }
     }
 
-    if (type === "CREDIT_SALE") {
-      agg.sales = agg.sales.add(amount);
-    }
-    if (type === "PAYMENT_RECEIVED") {
-      agg.receipts = agg.receipts.add(amount);
+    if (["MANUAL_DEBIT", "MANUAL_CREDIT", "ADJUSTMENT", "OPENING_BALANCE"].includes(type)) {
+      if (entry.accountingDate && (!agg.latestActivityDate || entry.accountingDate > agg.latestActivityDate)) {
+        agg.latestActivityDate = entry.accountingDate;
+      }
     }
 
     aggMap.set(entry.customerId, agg);
   }
 
-  // Build results
   const result = new Map<string, CustomerAccountingSummary>();
   for (const customerId of customerIds) {
     const openingBalance = openingMap.get(customerId) ?? new Decimal(0);
@@ -348,11 +403,23 @@ export async function getAllCustomerAccountingSummaries(): Promise<Map<string, C
       totalCredit: new Decimal(0),
       sales: new Decimal(0),
       receipts: new Decimal(0),
+      latestActivityDate: null,
     };
+
+    const sd = saleDateMap.get(customerId);
+    const pd = paymentDateMap.get(customerId);
+    if (sd && (!agg.latestActivityDate || sd > agg.latestActivityDate)) agg.latestActivityDate = sd;
+    if (pd && (!agg.latestActivityDate || pd > agg.latestActivityDate)) agg.latestActivityDate = pd;
 
     const closingBalance = openingBalance.add(agg.totalDebit).sub(agg.totalCredit);
     const outstanding = Decimal.max(closingBalance, new Decimal(0));
     const advance = Decimal.max(closingBalance.negated(), new Decimal(0));
+
+    let nextReminderDate: Date | null = null;
+    if (agg.latestActivityDate && outstanding.gt(0)) {
+      nextReminderDate = new Date(startOfDayIST(agg.latestActivityDate));
+      nextReminderDate.setDate(nextReminderDate.getDate() + 15);
+    }
 
     result.set(customerId, {
       customerId,
@@ -364,6 +431,8 @@ export async function getAllCustomerAccountingSummaries(): Promise<Map<string, C
       advance,
       sales: agg.sales,
       receipts: agg.receipts,
+      latestActivityDate: agg.latestActivityDate,
+      nextReminderDate,
     });
   }
 
@@ -391,34 +460,18 @@ export async function getTotalPendingCredit(): Promise<{ total: Decimal; count: 
  * as a cap: overdue amount cannot exceed outstanding balance.
  */
 export async function getTotalOverdue(): Promise<{ total: Decimal; count: number }> {
-  // Get all overdue invoices using the same FIFO logic from overdue.ts
-  // but cap each customer's overdue at their outstanding balance
-  const { getSalesWithFifoAllocation } = await import("./overdue");
-  const { sales: overdueSales } = await getSalesWithFifoAllocation();
-
-  // Get all customer accounting summaries for capping
   const summaries = await getAllCustomerAccountingSummaries();
-
-  // Group overdue sales by customer
-  const customerSales = new Map<string, Decimal[]>();
-  for (const sale of overdueSales) {
-    if (!sale.customerId) continue;
-    const list = customerSales.get(sale.customerId) ?? [];
-    list.push(sale.remainingAfterAllocation);
-    customerSales.set(sale.customerId, list);
-  }
-
-  // For each customer, cap overdue at outstanding balance
-  // Exclude customers whose capped overdue is 0
   let totalOverdue = new Decimal(0);
   let count = 0;
-  for (const [cid, amounts] of customerSales) {
-    const summary = summaries.get(cid);
-    const outstanding = summary?.outstanding ?? new Decimal(0);
-    const sumOverdue = amounts.reduce((s, a) => s.add(a), new Decimal(0));
-    const capped = Decimal.min(sumOverdue, outstanding);
-    if (capped.gt(0)) {
-      totalOverdue = totalOverdue.add(capped);
+  const today = getISTStartOfToday();
+
+  for (const summary of summaries.values()) {
+    if (
+      summary.outstanding.gt(0) &&
+      summary.nextReminderDate &&
+      summary.nextReminderDate <= today
+    ) {
+      totalOverdue = totalOverdue.add(summary.outstanding);
       count++;
     }
   }

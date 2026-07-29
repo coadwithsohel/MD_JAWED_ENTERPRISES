@@ -12,10 +12,11 @@ import {
   CreditCard,
   AlertTriangle,
   Upload,
-  Settings,
+  Settings, TrendingUp, Receipt,
   LogOut,
   Menu,
   X,
+  Layers,
 } from "lucide-react";
 
 interface NavItem {
@@ -105,7 +106,10 @@ export default function Sidebar() {
     { href: "/dashboard/products", label: "Products", icon: Package },
     { href: "/dashboard/sales", label: "Point of Sale", icon: ShoppingCart },
     { href: "/dashboard/invoices", label: "Sales History", icon: FileText },
+    { href: "/dashboard/expenses", label: "Expenses", icon: Receipt },
+    { href: "/dashboard/reports/profit-loss", label: "Profit & Loss", icon: TrendingUp },
     { href: "/dashboard/credit", label: "Credit Mgmt", icon: CreditCard },
+    { href: "/dashboard/bulk-entry", label: "Bulk Entry", icon: Layers },
     {
       href: "/dashboard/overdue-customers",
       label: "Overdue Customers",
@@ -150,7 +154,7 @@ export default function Sidebar() {
         />
       )}
 
-      {/* Sidebar — desktop: always visible and fixed, mobile: drawer */}
+      {/* Sidebar â€” desktop: always visible and fixed, mobile: drawer */}
       <aside
         className={[
           "fixed inset-y-0 left-0 z-50 flex flex-col w-64 bg-slate-900 text-slate-300 border-r border-slate-800 transition-transform duration-300 h-screen",
@@ -217,3 +221,4 @@ export default function Sidebar() {
     </>
   );
 }
+
