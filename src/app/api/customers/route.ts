@@ -218,8 +218,8 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ customer }, { status: 201 });
-  } catch (err) {
+  } catch (err: any) {
     console.error("[POST /api/customers]", err);
-    return NextResponse.json({ error: "Server error", detail: err.message, stack: err.stack }, { status: 500 });
+    return NextResponse.json({ error: "Server error", detail: err?.message, stack: err?.stack }, { status: 500 });
   }
 }
